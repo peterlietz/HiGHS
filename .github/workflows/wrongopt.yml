@@ -1,0 +1,98 @@
+# highspy 1.15.1's PyPI wheel (macOS arm64) reports 'Optimal' 58 on a model with a feasible 56; local
+# builds of the same commit give 56. The wheel was built on macos-14 with Xcode 15.4 (SDK 14.5). This
+# rebuilds it on the same runner with Xcode 15.4 and 16.2, without LTO or unity build, and with the
+# debug-solution checks (DEBUGSOL, assertions on). The model is encrypted; the key is a repo secret.
+name: wrongopt
+
+on:
+  push:
+    branches: [wrongopt-ci]
+
+jobs:
+  solve:
+    name: ${{ matrix.variant }} (Xcode ${{ matrix.xcode }})
+    runs-on: macos-14
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { variant: pypi-wheel, xcode: "15.4" }
+          - { variant: sdist, xcode: "15.4" }
+          - { variant: sdist, xcode: "16.2" }
+          - { variant: no-lto, xcode: "15.4" }
+          - { variant: no-unity, xcode: "15.4" }
+          - { variant: debugsol, xcode: "15.4" }
+          - { variant: debugsol, xcode: "16.2" }
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
+      # as cibuildwheel sets them for macosx_arm64
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      ARCHFLAGS: -arch arm64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with: { repository: ERGO-Code/HiGHS, ref: v1.15.1, path: HiGHS }
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.14" }
+
+      - name: Toolchain
+        run: |
+          sw_vers; sysctl -n machdep.cpu.brand_string hw.ncpu; ls -d /Applications/Xcode*.app
+          clang --version; xcrun --show-sdk-version; xcrun ld -version_details | head -3 || true
+          cmake --version | head -1; openssl version; python -VV
+          git -C HiGHS log -1 --format='HiGHS %H %d'
+
+      - name: Decrypt model
+        env: { KEY: "${{ secrets.WRONGOPT_KEY }}" }
+        run: |
+          for f in model.mps x56.sol; do
+            openssl enc -d -aes-256-cbc -md sha256 -pbkdf2 -iter 200000 -pass env:KEY -in wrongopt/$f.gz.enc | gunzip > $f
+          done
+          shasum -a 256 model.mps x56.sol
+
+      - name: Install highspy
+        run: |
+          python -m pip install -q -U pip
+          V="-v -C build.verbose=true"
+          case "${{ matrix.variant }}" in
+            pypi-wheel) pip install --only-binary=:all: highspy==1.15.1 ;;
+            sdist) pip install $V --no-binary=highspy highspy==1.15.1 ;;
+            no-lto) pip install $V --no-binary=highspy highspy==1.15.1 -C cmake.define.CMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF ;;
+            no-unity)
+              sed -i '' 's/UNITY_BUILD ON/UNITY_BUILD OFF/' HiGHS/highs/CMakeLists.txt
+              grep -n UNITY_BUILD HiGHS/highs/CMakeLists.txt
+              pip install $V ./HiGHS ;;
+            debugsol)
+              # Release would add NDEBUG and compile the checks out; keep -O3 and LTO otherwise
+              pip install $V ./HiGHS -C cmake.build-type=RelWithDebInfo \
+                -C "cmake.define.CMAKE_CXX_FLAGS_RELWITHDEBINFO=-O3 -g" \
+                -C "cmake.define.CMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -g" -C cmake.define.DEBUGSOL=ON ;;
+          esac
+
+      - name: Binary
+        run: |
+          D=$(python -c "import highspy, os; print(os.path.dirname(highspy.__file__))")
+          ls -la $D
+          for f in $D/libhighs.1.dylib $D/_core*.so; do
+            echo "== $f"; otool -l $f | grep -A7 LC_BUILD_VERSION | grep -E 'minos|sdk|version'
+            size -m $f | grep -E '__text|__TEXT'
+            echo "text sha256 $(otool -X -t $f | shasum -a 256 | cut -c1-16)"
+          done
+
+      - name: Solve
+        run: |
+          set +e
+          EXTRA=""; [ "${{ matrix.variant }}" = debugsol ] && EXTRA="--debug-sol=x56.sol"
+          python wrongopt/run.py model.mps $EXTRA
+          rc=$?
+          echo "exit code $rc"
+          if [ $rc -ne 0 ]; then
+            ls -lt ~/Library/Logs/DiagnosticReports/ 2>/dev/null | head -5
+            echo "== rerun under lldb for a backtrace"
+            lldb --batch -o run -k "thread backtrace -c 80" -k quit -- python wrongopt/run.py model.mps $EXTRA 2>&1 | tail -150
+          fi
+          exit 0
