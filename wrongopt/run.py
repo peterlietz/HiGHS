@@ -1,7 +1,8 @@
 """Solve model.mps with highspy as the engine poses it: mip_rel_gap 0, IPM for the MIP's LPs, no start.
 A feasible solution of objective 56 exists, so 'Optimal' 58 is wrong.
-usage: run.py MODEL [--debug-sol=FILE]  (FILE is checked against every bound change, cut and conflict;
-the check needs a DEBUGSOL build with assertions enabled)"""
+usage: run.py MODEL [--debug-sol=FILE] [--dev=LEVEL]  (FILE is checked against every bound change, cut and
+conflict; the check needs a DEBUGSOL build with assertions enabled. LEVEL is log_dev_level, which shows
+the "Fixing ... columns ... at analytic center" line)"""
 import sys
 import highspy
 
@@ -10,6 +11,8 @@ h = highspy.Highs()
 h.readModel(sys.argv[1])
 h.setOptionValue("mip_rel_gap", 0.0)
 h.setOptionValue("mip_lp_solver", "ipm")
+if "dev" in args:
+    h.setOptionValue("log_dev_level", int(args["dev"]))
 if "debug-sol" in args:
     h.setOptionValue("mip_debug_solution_file", args["debug-sol"])
 h.run()

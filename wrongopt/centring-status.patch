@@ -1,0 +1,179 @@
+From 469c60a8ef2898eccd12e8884faa258bd90c8d8b Mon Sep 17 00:00:00 2001
+From: fwesselm <fwesselm@mathworks.com>
+Date: Thu, 22 Oct 2026 12:43:29 +0200
+Subject: [PATCH] Centring status
+
+---
+ docs/src/structures/enums.md             | 10 ++++++++++
+ docs/src/structures/structs/HighsInfo.md |  4 ++++
+ highs/ipm/IpxWrapper.cpp                 |  7 +++++++
+ highs/lp_data/HConst.h                   |  8 ++++++++
+ highs/lp_data/HighsInfo.cpp              |  2 ++
+ highs/lp_data/HighsInfo.h                |  7 +++++++
+ highs/mip/HighsMipSolverData.cpp         |  6 ++++++
+ highspy/highs_bindings.cpp               |  1 +
+ highspy/highspy/_core/__init__.pyi       |  1 +
+ 9 files changed, 46 insertions(+)
+
+diff --git a/docs/src/structures/enums.md b/docs/src/structures/enums.md
+index f6962f629..f8d4530f9 100644
+--- a/docs/src/structures/enums.md
++++ b/docs/src/structures/enums.md
+@@ -63,6 +63,16 @@ This defines the nature of any basis information:
+  * `kBasisValidityInvalid`: There is no basisn information
+  * `kBasisValidityValid`: The basis information is valid
+ 
++## CentringStatus
++
++This defines the outcome of any centring by the interior point
++solver. The model status only indicates whether the LP is solved, so
++it can be optimal even if the solution is not centred:
++
++ * `kCentringStatusNone`: Centring was not performed, either because it was not requested or because the interior point solver did not reach optimality
++ * `kCentringStatusFailed`: Centring was performed, but the solution could not be centred
++ * `kCentringStatusSuccess`: The solution is centred
++
+ ## HighsModelStatus
+ 
+ This defines the status of the model after a call to `run`
+diff --git a/docs/src/structures/structs/HighsInfo.md b/docs/src/structures/structs/HighsInfo.md
+index 2c7d42a69..d1a71a152 100644
+--- a/docs/src/structures/structs/HighsInfo.md
++++ b/docs/src/structures/structs/HighsInfo.md
+@@ -38,6 +38,10 @@ Scalar information about a solved model is communicated via an instance of the H
+ - Comparison with [BasisValidity](@ref) gives the status of any basis information
+ - Type: integer
+ 
++## centring\_status
++- Comparison with [CentringStatus](@ref) gives the outcome of any centring by the interior point solver when the `run_centring` option is true
++- Type: integer
++
+ ## objective\_function\_value
+ - The optimal value of the objective function
+ - Type: double
+diff --git a/highs/ipm/IpxWrapper.cpp b/highs/ipm/IpxWrapper.cpp
+index 77b0f7da8..f93181737 100644
+--- a/highs/ipm/IpxWrapper.cpp
++++ b/highs/ipm/IpxWrapper.cpp
+@@ -198,6 +198,13 @@ HighsStatus solveLpIpx(const HighsOptions& options, HighsTimer& timer,
+   if (report_solve_data) reportSolveData(options.log_options, ipx_info);
+   highs_info.ipm_iteration_count += (HighsInt)ipx_info.iter;
+   highs_info.crossover_iteration_count += (HighsInt)ipx_info.updates_crossover;
++  // Record the outcome of any centring, since the model status only
++  // indicates whether the LP is solved. Centring is not tried if the
++  // IPM stops before reaching optimality
++  highs_info.centring_status =
++      !ipx_info.centring_tried    ? kCentringStatusNone
++      : ipx_info.centring_success ? kCentringStatusSuccess
++                                  : kCentringStatusFailed;
+ 
+   // If not solved...
+   if (solve_status != IPX_STATUS_solved) {
+diff --git a/highs/lp_data/HConst.h b/highs/lp_data/HConst.h
+index b7e66ed24..e57a2a097 100644
+--- a/highs/lp_data/HConst.h
++++ b/highs/lp_data/HConst.h
+@@ -155,6 +155,14 @@ enum BasisValidity {
+   kBasisValidityMax = kBasisValidityValid
+ };
+ 
++enum CentringStatus {
++  kCentringStatusNone = 0,
++  kCentringStatusFailed,
++  kCentringStatusSuccess,
++  kCentringStatusMin = kCentringStatusNone,
++  kCentringStatusMax = kCentringStatusSuccess
++};
++
+ const std::string kHighsBasisFileV1 = "v1";  // Deprecated
+ const std::string kHighsBasisFileV2 = "v2";
+ 
+diff --git a/highs/lp_data/HighsInfo.cpp b/highs/lp_data/HighsInfo.cpp
+index 16c0b3a7b..318c18d97 100644
+--- a/highs/lp_data/HighsInfo.cpp
++++ b/highs/lp_data/HighsInfo.cpp
+@@ -23,6 +23,7 @@ void HighsInfo::invalidate() {
+   pdlp_iteration_count = -1;
+   qp_iteration_count = -1;
+   basis_validity = kBasisValidityInvalid;
++  centring_status = kCentringStatusNone;
+   objective_function_value = 0;
+   mip_dual_bound = 0;
+   mip_gap = kHighsInf;
+@@ -87,6 +88,7 @@ bool HighsInfo::equal(const HighsInfo& info_) const {
+     return false;
+   if (info_.dual_solution_status != this->dual_solution_status) return false;
+   if (info_.basis_validity != this->basis_validity) return false;
++  if (info_.centring_status != this->centring_status) return false;
+   if (info_.objective_function_value != this->objective_function_value)
+     return false;
+   if (info_.mip_dual_bound != this->mip_dual_bound) return false;
+diff --git a/highs/lp_data/HighsInfo.h b/highs/lp_data/HighsInfo.h
+index 6a19e069b..19bf7f239 100644
+--- a/highs/lp_data/HighsInfo.h
++++ b/highs/lp_data/HighsInfo.h
+@@ -103,6 +103,7 @@ struct HighsInfoStruct {
+   HighsInt primal_solution_status;
+   HighsInt dual_solution_status;
+   HighsInt basis_validity;
++  HighsInt centring_status;
+   double objective_function_value;
+   double mip_dual_bound;
+   double mip_gap;
+@@ -234,6 +235,12 @@ class HighsInfo : public HighsInfoStruct {
+         advanced, &basis_validity, kBasisValidityInvalid);
+     records.push_back(record_int);
+ 
++    record_int = new InfoRecordInt(
++        "centring_status",
++        "IPM centring status: 0 => None; 1 => Failed; 2 => Success", advanced,
++        &centring_status, kCentringStatusNone);
++    records.push_back(record_int);
++
+     record_double = new InfoRecordDouble("objective_function_value",
+                                          "Objective function value", advanced,
+                                          &objective_function_value, 0);
+diff --git a/highs/mip/HighsMipSolverData.cpp b/highs/mip/HighsMipSolverData.cpp
+index 9c1eb8f5c..a23cd4806 100644
+--- a/highs/mip/HighsMipSolverData.cpp
++++ b/highs/mip/HighsMipSolverData.cpp
+@@ -486,6 +486,12 @@ void HighsMipSolverData::startAnalyticCenterComputation(
+     }
+     if (HighsInt(sol.size()) != mipsolver.numCol()) return;
+     analyticCenterStatus = ipm.getModelStatus();
++    // The model status only indicates that the LP is solved, which is
++    // true for any feasible point since the costs are zero. Fixing
++    // variables in finishAnalyticCenterComputation requires the point to
++    // be centred, so only accept an optimal status if centring succeeded
++    if (ipm.getInfo().centring_status != kCentringStatusSuccess)
++      analyticCenterStatus = HighsModelStatus::kUnknown;
+     analyticCenter = sol;
+   });
+ }
+diff --git a/highspy/highs_bindings.cpp b/highspy/highs_bindings.cpp
+index 7bd55cc73..7e5988b92 100644
+--- a/highspy/highs_bindings.cpp
++++ b/highspy/highs_bindings.cpp
+@@ -1187,6 +1187,7 @@ PYBIND11_MODULE(_core, m, py::mod_gil_not_used()) {
+                      &HighsInfo::primal_solution_status)
+       .def_readwrite("dual_solution_status", &HighsInfo::dual_solution_status)
+       .def_readwrite("basis_validity", &HighsInfo::basis_validity)
++      .def_readwrite("centring_status", &HighsInfo::centring_status)
+       .def_readwrite("objective_function_value",
+                      &HighsInfo::objective_function_value)
+       .def_readwrite("mip_dual_bound", &HighsInfo::mip_dual_bound)
+diff --git a/highspy/highspy/_core/__init__.pyi b/highspy/highspy/_core/__init__.pyi
+index 00b30a82e..4d43982f1 100644
+--- a/highspy/highspy/_core/__init__.pyi
++++ b/highspy/highspy/_core/__init__.pyi
+@@ -198,6 +198,7 @@ class HighsIisInfo:
+ 
+ class HighsInfo:
+     basis_validity: int
++    centring_status: int
+     crossover_iteration_count: int
+     dual_solution_status: int
+     ipm_iteration_count: int
+-- 
+2.54.0 (Apple Git-157)
+

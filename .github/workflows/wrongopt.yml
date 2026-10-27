@@ -10,7 +10,7 @@ on:
 
 jobs:
   solve:
-    name: ${{ matrix.task || 'solve' }} ${{ matrix.variant }} (Xcode ${{ matrix.xcode }})
+    name: ${{ matrix.task || 'solve' }} ${{ matrix.variant }} ${{ matrix.ref }}${{ matrix.patch && ' + ' || '' }}${{ matrix.patch }} (Xcode ${{ matrix.xcode }})
     runs-on: macos-14
     timeout-minutes: 150
     strategy:
@@ -20,11 +20,14 @@ jobs:
         # debugsol 15.4 asserts, debugsol 16.2: 56. Run 3: the failing bound change comes from
         # finishAnalyticCenterComputation (column 35545 fixed to 0).
         # Variants: pypi-wheel, sdist, no-lto, no-unity, debugsol (Xcode 15.4 or 16.2);
-        # task: solve (default) or ac (the analytic centre, wrongopt/ac.py)
+        # task: solve (default) or ac (the analytic centre, wrongopt/ac.py). Run 5: IPX stalls ("no
+        # progress") in every build; 1.15.1 still accepts the point as the centre when the objective gap
+        # is small. Upstream 469c60a8e (22 Oct) accepts it only if centring succeeded.
+        # variant src: HiGHS at ref, plus wrongopt/<patch> if given
         include:
-          - { variant: pypi-wheel, xcode: "15.4", task: ac }
-          - { variant: sdist, xcode: "16.2", task: ac }
-          - { variant: no-lto, xcode: "15.4", task: ac }
+          - { variant: src, xcode: "15.4", ref: v1.15.1 }
+          - { variant: src, xcode: "15.4", ref: v1.15.1, patch: centring-status.patch }
+          - { variant: src, xcode: "15.4", ref: 399f1c0b12a3f2a7c03f71ad4be372ba63d6163e }
     env:
       DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
       # as cibuildwheel sets them for macosx_arm64
@@ -36,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/checkout@v6
-        with: { repository: ERGO-Code/HiGHS, ref: v1.15.1, path: HiGHS }
+        with: { repository: ERGO-Code/HiGHS, ref: "${{ matrix.ref || 'v1.15.1' }}", path: HiGHS }
       - uses: actions/setup-python@v6
         with: { python-version: "3.14" }
 
@@ -61,6 +64,9 @@ jobs:
           V="-v -C build.verbose=true"
           case "${{ matrix.variant }}" in
             pypi-wheel) pip install --only-binary=:all: highspy==1.15.1 ;;
+            src)
+              if [ -n "${{ matrix.patch }}" ]; then git -C HiGHS apply -v ../wrongopt/${{ matrix.patch }}; fi
+              pip install $V ./HiGHS ;;
             sdist) pip install $V --no-binary=highspy highspy==1.15.1 ;;
             no-lto) pip install $V --no-binary=highspy highspy==1.15.1 -C cmake.define.CMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF ;;
             no-unity)
@@ -103,7 +109,7 @@ jobs:
               -k "up" -k "frame variable -D 1" -k "up" -k "frame variable -D 1" \
               -k kill -k quit -- python wrongopt/run.py model.mps --debug-sol=x56.sol
           else
-            python wrongopt/run.py model.mps
+            python wrongopt/run.py model.mps --dev=1
           fi
           echo "exit code $?"
           exit 0
