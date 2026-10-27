@@ -1,8 +1,8 @@
 """The analytic centre as HighsMipSolverData::startAnalyticCenterComputation computes it (presolved MIP
 model, zero cost, IPX, no presolve, no crossover, centring, 200 iterations), and the columns that
 finishAnalyticCenterComputation would fix at a bound. Column 35545 (presolved) is the one whose fixing
-cuts off the 56 solution in the Xcode 15.4 build. Then the same with tighter IPX settings, as an
-estimate of the true centre, and the largest value column 35545 takes on the LP polytope.
+cuts off the 56 solution in the Xcode 15.4 build. With the IPX log, then without centring, and the
+largest value column 35545 takes on the LP polytope.
 usage: ac.py MODEL"""
 import sys
 import highspy
@@ -20,9 +20,10 @@ lp.col_cost_ = [0.0] * lp.num_col_
 lp.integrality_ = []
 
 
-def centre(tag, **opts):
+def centre(tag, log=False, **opts):
     ipm = highspy.Highs()
-    ipm.setOptionValue("output_flag", False)
+    ipm.setOptionValue("output_flag", log)
+    ipm.setOptionValue("log_dev_level", 1 if log else 0)
     base = {"presolve": "off", "solver": "ipx", "ipm_iteration_limit": 200, "run_crossover": "off",
             "run_centring": True}
     for k, v in {**base, **opts}.items():
@@ -38,18 +39,15 @@ def centre(tag, **opts):
     print(tag, ipm.modelStatusToString(ipm.getModelStatus()), "iterations", ipm.getInfo().ipm_iteration_count,
           f"x[{COL}] = {x[COL]:.3e}", "fixed at lower", int(atlo.sum()), "at upper", int(atup.sum()),
           "smallest distance to the lower bound above tolerance", f"{(x - lo)[free & ~atlo].min():.3e}", flush=True)
-    return x, atlo, atup
+    d = (x - lo)[free & ~atlo]
+    print(tag, "distances to the lower bound above tolerance by decade:",
+          {f"1e{k}": int(((d >= 10.0 ** k) & (d < 10.0 ** (k + 1))).sum()) for k in range(-6, 0)}, flush=True)
+    return x
 
 
-x, atlo, atup = centre("as in the MIP solver:")
-xt, atlo_t, atup_t = centre("tighter (1000 iterations, tolerance 1e-10):", ipm_iteration_limit=1000,
-                            ipm_optimality_tolerance=1e-10, primal_feasibility_tolerance=1e-10,
-                            dual_feasibility_tolerance=1e-10)
-print("fixed as in the MIP solver but not with the tighter centre:", int((atlo & ~atlo_t).sum() + (atup & ~atup_t).sum()),
-      "columns; values there, tighter centre:", np.sort(xt[atlo & ~atlo_t])[:10])
-order = np.argsort(x)
-print(f"rank of x[{COL}] among the {lp.num_col_} values:", int(np.where(order == COL)[0][0]),
-      "; ten smallest distances to the lower bound:", np.sort((x - lo)[free])[:10])
+x = centre("as in the MIP solver:", log=True)
+x0 = centre("without centring:", run_centring=False)
+print(f"max |difference| between the two: {np.abs(x - x0).max():.3e}", flush=True)
 mx = highspy.Highs()
 mx.setOptionValue("output_flag", False)
 cost = [0.0] * lp.num_col_

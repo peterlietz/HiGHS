@@ -24,6 +24,7 @@ jobs:
         include:
           - { variant: pypi-wheel, xcode: "15.4", task: ac }
           - { variant: sdist, xcode: "16.2", task: ac }
+          - { variant: no-lto, xcode: "15.4", task: ac }
     env:
       DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
       # as cibuildwheel sets them for macosx_arm64
