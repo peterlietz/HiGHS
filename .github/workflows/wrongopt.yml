@@ -10,17 +10,20 @@ on:
 
 jobs:
   solve:
-    name: ${{ matrix.variant }} (Xcode ${{ matrix.xcode }})
+    name: ${{ matrix.task || 'solve' }} ${{ matrix.variant }} (Xcode ${{ matrix.xcode }})
     runs-on: macos-14
     timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
         # runs 1-2: pypi-wheel, sdist 15.4, no-unity 15.4: 58; sdist 16.2, no-lto 15.4: 56;
-        # debugsol 15.4 asserts, debugsol 16.2: 56.
-        # Variants: pypi-wheel, sdist, no-lto, no-unity, debugsol (Xcode 15.4 or 16.2)
+        # debugsol 15.4 asserts, debugsol 16.2: 56. Run 3: the failing bound change comes from
+        # finishAnalyticCenterComputation (column 35545 fixed to 0).
+        # Variants: pypi-wheel, sdist, no-lto, no-unity, debugsol (Xcode 15.4 or 16.2);
+        # task: solve (default) or ac (the analytic centre, wrongopt/ac.py)
         include:
-          - { variant: debugsol, xcode: "15.4" }
+          - { variant: pypi-wheel, xcode: "15.4", task: ac }
+          - { variant: sdist, xcode: "16.2", task: ac }
     env:
       DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
       # as cibuildwheel sets them for macosx_arm64
@@ -86,7 +89,9 @@ jobs:
       - name: Solve
         run: |
           set +e
-          if [ "${{ matrix.variant }}" = debugsol ]; then
+          if [ "${{ matrix.task }}" = ac ]; then
+            python wrongopt/ac.py model.mps
+          elif [ "${{ matrix.variant }}" = debugsol ]; then
             # the failing check (HighsDebugSol.cpp:153) is a bound change that cuts off the 56 solution;
             # -k runs after the crash stop, in the frame of boundChangeAdded
             ls $HOME/lto | head -3
