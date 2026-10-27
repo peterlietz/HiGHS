@@ -23,11 +23,11 @@ jobs:
         # task: solve (default) or ac (the analytic centre, wrongopt/ac.py). Run 5: IPX stalls ("no
         # progress") in every build; 1.15.1 still accepts the point as the centre when the objective gap
         # is small. Upstream 469c60a8e (22 Oct) accepts it only if centring succeeded.
-        # variant src: HiGHS at ref, plus wrongopt/<patch> if given
+        # variant src: HiGHS at ref, plus wrongopt/<patch> if given. Run 6: 1.15.1 58, + 469c60a8e 56,
+        # latest 56. task check: the engine's tests/highs/check.py (encrypted in wrongopt/highs-tests.tar.enc)
         include:
-          - { variant: src, xcode: "15.4", ref: v1.15.1 }
-          - { variant: src, xcode: "15.4", ref: v1.15.1, patch: centring-status.patch }
-          - { variant: src, xcode: "15.4", ref: 399f1c0b12a3f2a7c03f71ad4be372ba63d6163e }
+          - { variant: pypi-wheel, xcode: "15.4", task: check }
+          - { variant: src, xcode: "15.4", ref: 399f1c0b12a3f2a7c03f71ad4be372ba63d6163e, task: check }
     env:
       DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
       # as cibuildwheel sets them for macosx_arm64
@@ -57,6 +57,9 @@ jobs:
             openssl enc -d -aes-256-cbc -md sha256 -pbkdf2 -iter 200000 -pass env:KEY -in wrongopt/$f.gz.enc | gunzip > $f
           done
           shasum -a 256 model.mps x56.sol
+          mkdir -p tests
+          openssl enc -d -aes-256-cbc -md sha256 -pbkdf2 -iter 200000 -pass env:KEY -in wrongopt/highs-tests.tar.enc | tar -C tests -xf -
+          ls -la tests/highs
 
       - name: Install highspy
         run: |
@@ -96,7 +99,9 @@ jobs:
       - name: Solve
         run: |
           set +e
-          if [ "${{ matrix.task }}" = ac ]; then
+          if [ "${{ matrix.task }}" = check ]; then
+            python tests/highs/check.py
+          elif [ "${{ matrix.task }}" = ac ]; then
             python wrongopt/ac.py model.mps
           elif [ "${{ matrix.variant }}" = debugsol ]; then
             # the failing check (HighsDebugSol.cpp:153) is a bound change that cuts off the 56 solution;
