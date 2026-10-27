@@ -16,14 +16,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # run 1: pypi-wheel 58; sdist 16.2, no-lto 15.4: 56; debugsol 15.4 asserts, 16.2: 56.
+        # Variants left: pypi-wheel, sdist, no-lto, no-unity, debugsol (Xcode 15.4 or 16.2)
         include:
-          - { variant: pypi-wheel, xcode: "15.4" }
           - { variant: sdist, xcode: "15.4" }
-          - { variant: sdist, xcode: "16.2" }
-          - { variant: no-lto, xcode: "15.4" }
           - { variant: no-unity, xcode: "15.4" }
           - { variant: debugsol, xcode: "15.4" }
-          - { variant: debugsol, xcode: "16.2" }
     env:
       DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
       # as cibuildwheel sets them for macosx_arm64
@@ -86,13 +84,16 @@ jobs:
       - name: Solve
         run: |
           set +e
-          EXTRA=""; [ "${{ matrix.variant }}" = debugsol ] && EXTRA="--debug-sol=x56.sol"
-          python wrongopt/run.py model.mps $EXTRA
-          rc=$?
-          echo "exit code $rc"
-          if [ $rc -ne 0 ]; then
-            ls -lt ~/Library/Logs/DiagnosticReports/ 2>/dev/null | head -5
-            echo "== rerun under lldb for a backtrace"
-            lldb --batch -o run -k "thread backtrace -c 80" -k quit -- python wrongopt/run.py model.mps $EXTRA 2>&1 | tail -150
+          if [ "${{ matrix.variant }}" = debugsol ]; then
+            # stop at the failing check (HighsDebugSol.cpp:153, a bound change that cuts off the 56 solution)
+            lldb --batch -o "settings set target.process.stop-on-exec false" \
+              -o "breakpoint set --file HighsDebugSol.cpp --line 153" -o run \
+              -o "thread backtrace -c 80" \
+              -o "frame variable -D 2" -o "frame select 1" -o "frame variable -D 2" \
+              -o "frame select 2" -o "frame variable -D 2" -o "frame select 3" -o "frame variable -D 2" \
+              -o kill -o quit -- python wrongopt/run.py model.mps --debug-sol=x56.sol
+          else
+            python wrongopt/run.py model.mps
           fi
+          echo "exit code $?"
           exit 0
