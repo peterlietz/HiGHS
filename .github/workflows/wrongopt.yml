@@ -16,11 +16,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # run 1: pypi-wheel 58; sdist 16.2, no-lto 15.4: 56; debugsol 15.4 asserts, 16.2: 56.
-        # Variants left: pypi-wheel, sdist, no-lto, no-unity, debugsol (Xcode 15.4 or 16.2)
+        # runs 1-2: pypi-wheel, sdist 15.4, no-unity 15.4: 58; sdist 16.2, no-lto 15.4: 56;
+        # debugsol 15.4 asserts, debugsol 16.2: 56.
+        # Variants: pypi-wheel, sdist, no-lto, no-unity, debugsol (Xcode 15.4 or 16.2)
         include:
-          - { variant: sdist, xcode: "15.4" }
-          - { variant: no-unity, xcode: "15.4" }
           - { variant: debugsol, xcode: "15.4" }
     env:
       DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
@@ -65,8 +64,11 @@ jobs:
               grep -n UNITY_BUILD HiGHS/highs/CMakeLists.txt
               pip install $V ./HiGHS ;;
             debugsol)
-              # Release would add NDEBUG and compile the checks out; keep -O3 and LTO otherwise
+              # Release would add NDEBUG and compile the checks out; keep -O3 and LTO otherwise.
+              # Keep the LTO objects so that lldb finds line info and inlined frames.
+              mkdir -p $HOME/lto
               pip install $V ./HiGHS -C cmake.build-type=RelWithDebInfo \
+                -C "cmake.define.CMAKE_SHARED_LINKER_FLAGS=-Wl,-object_path_lto,$HOME/lto" \
                 -C "cmake.define.CMAKE_CXX_FLAGS_RELWITHDEBINFO=-O3 -g" \
                 -C "cmake.define.CMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -g" -C cmake.define.DEBUGSOL=ON ;;
           esac
@@ -85,13 +87,15 @@ jobs:
         run: |
           set +e
           if [ "${{ matrix.variant }}" = debugsol ]; then
-            # stop at the failing check (HighsDebugSol.cpp:153, a bound change that cuts off the 56 solution)
-            lldb --batch -o "settings set target.process.stop-on-exec false" \
-              -o "breakpoint set --file HighsDebugSol.cpp --line 153" -o run \
-              -o "thread backtrace -c 80" \
-              -o "frame variable -D 2" -o "frame select 1" -o "frame variable -D 2" \
-              -o "frame select 2" -o "frame variable -D 2" -o "frame select 3" -o "frame variable -D 2" \
-              -o kill -o quit -- python wrongopt/run.py model.mps --debug-sol=x56.sol
+            # the failing check (HighsDebugSol.cpp:153) is a bound change that cuts off the 56 solution;
+            # -k runs after the crash stop, in the frame of boundChangeAdded
+            ls $HOME/lto | head -3
+            lldb --batch -o "settings set target.process.stop-on-exec false" -o run \
+              -k "thread backtrace -c 60" -k "frame variable -D 1" \
+              -k "expr -- (double)this->debugSolution[domchg.column]" \
+              -k "up" -k "frame variable -D 1" -k "up" -k "frame variable -D 1" \
+              -k "up" -k "frame variable -D 1" -k "up" -k "frame variable -D 1" \
+              -k kill -k quit -- python wrongopt/run.py model.mps --debug-sol=x56.sol
           else
             python wrongopt/run.py model.mps
           fi
