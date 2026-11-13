@@ -922,9 +922,9 @@ void HighsMipSolverData::checkAddSolution() {
   // The result is stored in mipsolver.solution_ if it is feasible and
   // improves on the upper bound
   const double image_solobj = double(image_objective) - offset;
-  if (!image.empty() && upper_bound - image_solobj >
-                            options.mip_feasibility_tolerance *
-                                (1 + std::fabs(upper_bound))) {
+  if (!image.empty() &&
+      upper_bound - image_solobj >
+          options.mip_feasibility_tolerance * (1 + std::fabs(upper_bound))) {
     const double solobj = transformNewIntegerFeasibleSolution(image);
     if (solobj < upper_bound) {
       tightenUpperBound(solobj);
