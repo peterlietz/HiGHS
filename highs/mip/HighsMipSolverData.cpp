@@ -917,9 +917,14 @@ void HighsMipSolverData::checkAddSolution() {
                    "is only used to bound the objective\n");
     return;
   }
-  if (!image.empty() && double(image_objective) - offset < upper_bound) {
-    // Postsolve the image, storing the result in mipsolver.solution_
-    // if it is feasible and improves on the upper bound
+  // Postsolve the image only if it is significantly better, so that a
+  // start whose image differs only by rounding is returned unchanged.
+  // The result is stored in mipsolver.solution_ if it is feasible and
+  // improves on the upper bound
+  const double image_solobj = double(image_objective) - offset;
+  if (!image.empty() && upper_bound - image_solobj >
+                            options.mip_feasibility_tolerance *
+                                (1 + std::fabs(upper_bound))) {
     const double solobj = transformNewIntegerFeasibleSolution(image);
     if (solobj < upper_bound) {
       tightenUpperBound(solobj);

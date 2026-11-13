@@ -2847,15 +2847,32 @@ TEST_CASE("issue-3634", "[highs_test_mip_solver]") {
 }
 
 TEST_CASE("issue-3642", "[highs_test_mip_solver]") {
-  // The start solution contradicts a parallel column reduction, so
-  // its image in the reduced space is infeasible, with an objective
-  // value below the optimum
-  const std::string instances = std::string(HIGHS_DIR) + "/check/instances/";
+  // Model and start solution by DoumarCharles, from ERGO-Code/HiGHS
+  // issue 3643. Column x6 is parallel to x2 with a higher cost,
+  // so presolve removes it, and tightens r0 to -x2 + x3 + x4 <= 1. The
+  // start has x6 = 1 and x2 = 0, so its image in the reduced space
+  // violates r0, with objective value -5, below the optimum -1
+  HighsLp lp;
+  lp.num_col_ = 6;
+  lp.num_row_ = 3;
+  lp.col_cost_ = {3, 4, 0, -5, 4.5, 7.25};
+  lp.col_lower_.assign(6, 0);
+  lp.col_upper_.assign(6, 1);
+  lp.integrality_.assign(6, HighsVarType::kInteger);
+  lp.row_lower_ = {-inf, 1, -inf};
+  lp.row_upper_ = {25, 1, 1};
+  lp.a_matrix_.format_ = MatrixFormat::kRowwise;
+  lp.a_matrix_.start_ = {0, 4, 7, 9};
+  lp.a_matrix_.index_ = {1, 2, 3, 5, 0, 2, 4, 0, 3};
+  lp.a_matrix_.value_ = {-5, 17, 13, -5, 1, 1, 1, 1, 1};
+  HighsSolution start;
+  start.col_value = {0, 0, 1, 1, 0, 1};
+  start.value_valid = true;
   Highs h;
   h.setOptionValue("output_flag", dev_run);
-  REQUIRE(h.readModel(instances + "issue-3642.mps") == HighsStatus::kOk);
-  REQUIRE(h.readSolution(instances + "issue-3642.sol") == HighsStatus::kOk);
-  testStartSolution(h, 18150);
+  REQUIRE(h.passModel(lp) == HighsStatus::kOk);
+  REQUIRE(h.setSolution(start) == HighsStatus::kOk);
+  testStartSolution(h, -1);
 
   h.resetGlobalScheduler(true);
 }
