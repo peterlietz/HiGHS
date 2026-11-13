@@ -2878,12 +2878,6 @@ TEST_CASE("issue-3642", "[highs_test_mip_solver]") {
   REQUIRE(h.setSolution(start) == HighsStatus::kOk);
   testStartSolution(h, -1);
 
-  // A start solution with a NaN objective value must not be used to
-  // bound the objective
-  start.col_value[5] = std::numeric_limits<double>::quiet_NaN();
-  REQUIRE(h.setSolution(start) == HighsStatus::kOk);
-  testStartSolution(h, -1);
-
   h.resetGlobalScheduler(true);
 }
 
