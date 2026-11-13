@@ -2836,6 +2836,10 @@ TEST_CASE("issue-3634", "[highs_test_mip_solver]") {
   Highs h;
   h.setOptionValue("output_flag", dev_run);
   h.setOptionValue("mip_rel_gap", 0);
+  // Prevent the optimal solution from being found other than via the
+  // image of the start solution
+  h.setOptionValue("mip_heuristic_run_feasibility_jump", false);
+  h.setOptionValue("mip_max_nodes", 0);
   REQUIRE(h.readModel(model) == HighsStatus::kOk);
   HighsSolution solution;
   solution.col_value = start;
@@ -2871,6 +2875,12 @@ TEST_CASE("issue-3642", "[highs_test_mip_solver]") {
   Highs h;
   h.setOptionValue("output_flag", dev_run);
   REQUIRE(h.passModel(lp) == HighsStatus::kOk);
+  REQUIRE(h.setSolution(start) == HighsStatus::kOk);
+  testStartSolution(h, -1);
+
+  // A start solution with a NaN objective value must not be used to
+  // bound the objective
+  start.col_value[5] = std::numeric_limits<double>::quiet_NaN();
   REQUIRE(h.setSolution(start) == HighsStatus::kOk);
   testStartSolution(h, -1);
 

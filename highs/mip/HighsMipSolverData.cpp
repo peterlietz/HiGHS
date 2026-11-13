@@ -867,7 +867,8 @@ void HighsMipSolverData::checkAddSolution() {
   // Update the upper bound and limits given the objective value
   // (without offset) of a feasible solution in the original space
   auto tightenUpperBound = [&](const double solobj) {
-    if (solobj >= upper_bound) return;
+    // Negated so that a NaN objective is rejected
+    if (!(solobj < upper_bound)) return;
     const double prev_upper_bound = upper_bound;
     upper_bound = solobj;
     if (!mipsolver.submip)
@@ -900,6 +901,14 @@ void HighsMipSolverData::checkAddSolution() {
     assert(!interrupt);
   }
 
+  // The reduced model is consistent only if presolve has run to
+  // completion, rather than returning early (when infeasibility,
+  // unboundedness, or an error is detected)
+  if (presolve_status != HighsPresolveStatus::kNotPresolved &&
+      presolve_status != HighsPresolveStatus::kNotReduced &&
+      presolve_status != HighsPresolveStatus::kReduced)
+    return;
+
   // Dual reductions need not retain this particular solution, so its
   // image in the reduced space may be infeasible (#3642), or may
   // postsolve to a different solution (#3510, #3634). Hence the image
@@ -920,11 +929,12 @@ void HighsMipSolverData::checkAddSolution() {
   // Postsolve the image only if it is significantly better, so that a
   // start whose image differs only by rounding is returned unchanged.
   // The result is stored in mipsolver.solution_ if it is feasible and
-  // improves on the upper bound
+  // improves on the upper bound. The tolerance is relative to the
+  // objective value including the offset
   const double image_solobj = double(image_objective) - offset;
   if (!image.empty() &&
-      upper_bound - image_solobj >
-          options.mip_feasibility_tolerance * (1 + std::fabs(upper_bound))) {
+      upper_bound - image_solobj > options.mip_feasibility_tolerance *
+                                       (1 + std::fabs(upper_bound + offset))) {
     const double solobj = transformNewIntegerFeasibleSolution(image);
     if (solobj < upper_bound) {
       tightenUpperBound(solobj);
