@@ -2825,7 +2825,6 @@ HighsStatus Highs::setSolution(const HighsInt num_entries,
 
 HighsStatus Highs::setCallback(HighsCallbackFunctionType user_callback,
                                void* user_callback_data) {
-  this->logHeader();
   this->callback_.clear();
   this->callback_.user_callback = std::move(user_callback);
   this->callback_.user_callback_data = user_callback_data;
@@ -2838,7 +2837,6 @@ HighsStatus Highs::setCallback(HighsCallbackFunctionType user_callback,
 
 HighsStatus Highs::setCallback(HighsCCallbackType c_callback,
                                void* user_callback_data) {
-  this->logHeader();
   this->callback_.clear();
   this->callback_.user_callback = [c_callback](
                                       int a, const std::string& b,
@@ -2859,7 +2857,6 @@ HighsStatus Highs::setCallback(HighsCCallbackType c_callback,
 }
 
 HighsStatus Highs::startCallback(const int callback_type) {
-  this->logHeader();
   const bool callback_type_ok =
       callback_type >= kCallbackMin && callback_type <= kCallbackMax;
   assert(callback_type_ok);
@@ -2878,7 +2875,6 @@ HighsStatus Highs::startCallback(const int callback_type) {
 }
 
 HighsStatus Highs::startCallback(const HighsCallbackType callback_type) {
-  this->logHeader();
   const bool callback_type_ok =
       callback_type >= kCallbackMin && callback_type <= kCallbackMax;
   assert(callback_type_ok);
@@ -2897,7 +2893,6 @@ HighsStatus Highs::startCallback(const HighsCallbackType callback_type) {
 }
 
 HighsStatus Highs::stopCallback(const int callback_type) {
-  this->logHeader();
   const bool callback_type_ok =
       callback_type >= kCallbackMin && callback_type <= kCallbackMax;
   assert(callback_type_ok);
@@ -2916,7 +2911,6 @@ HighsStatus Highs::stopCallback(const int callback_type) {
 }
 
 HighsStatus Highs::stopCallback(const HighsCallbackType callback_type) {
-  this->logHeader();
   const bool callback_type_ok =
       callback_type >= kCallbackMin && callback_type <= kCallbackMax;
   assert(callback_type_ok);
@@ -4674,14 +4668,11 @@ HighsStatus Highs::callRunPostsolve(const HighsSolution& solution,
 
 // End of public methods
 void Highs::logHeader() const {
-  if (!options_.output_flag) return;
-  //  if (!*options_.log_options.output_flag) return;
-  static std::once_flag flag;
-
-  std::call_once(flag, [this]() {
-    highsLogHeader(options_.log_options, options_.log_githash);
-  });
-  return;
+  // Write the header once per instance, so that every instance that
+  // logs (for example to its own log file) writes it
+  if (written_log_header_ || !options_.output_flag) return;
+  written_log_header_ = true;
+  highsLogHeader(options_.log_options, options_.log_githash);
 }
 
 void Highs::reportModel(const HighsModel& model) {
