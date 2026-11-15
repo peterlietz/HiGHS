@@ -684,6 +684,31 @@ double HighsMipSolverData::upperLimitObjective(const double solobj,
   return std::ceil(scale * solobj - feastol) / scale;
 }
 
+bool HighsMipSolverData::reducedSpaceImage(const std::vector<double>& solution,
+                                           std::vector<double>& image,
+                                           double& image_solobj) {
+  image.clear();
+  // The reduced model is consistent only if presolve has run to
+  // completion, rather than returning early (when infeasibility,
+  // unboundedness, or an error is detected)
+  if (presolve_status != HighsPresolveStatus::kNotPresolved &&
+      presolve_status != HighsPresolveStatus::kNotReduced &&
+      presolve_status != HighsPresolveStatus::kReduced)
+    return false;
+  // Dual reductions retain an optimal solution, not every feasible one,
+  // so the image of a feasible solution may be infeasible in the reduced
+  // space (#3642), or may postsolve to a different solution (#3510,
+  // #3634)
+  image = postSolveStack.getReducedPrimalSolution(solution);
+  MipViolation violation;
+  HighsCDouble image_objective;
+  if (!mipsolver.solutionFeasible(mipsolver.model_, image, nullptr, violation,
+                                  image_objective))
+    return false;
+  image_solobj = double(image_objective) - mipsolver.model_->offset_;
+  return true;
+}
+
 bool HighsMipSolverData::moreHeuristicsAllowed() const {
   // in the beginning of the search and in sub-MIP heuristics we only allow
   // what is proportionally for the currently spent effort plus an initial
@@ -1775,68 +1800,81 @@ bool HighsMipSolverData::addIncumbent(const std::vector<double>& sol,
   if (possibly_store_as_new_incumbent) {
     solobj = mipsolver_reduced_objective_value;
     if (solobj >= upper_bound) return false;
-
-    double prev_upper_bound = upper_bound;
-
-    upper_bound = solobj;
-    for (HighsMipWorker& worker : workers) {
-      worker.upper_bound = upper_bound;
-    }
-
-    bool bound_change = upper_bound != prev_upper_bound;
-    if (!mipsolver.submip && bound_change)
-      updatePrimalDualIntegral(lower_bound, lower_bound, prev_upper_bound,
-                               upper_bound);
-
     // Assigning new incumbent
     incumbent = sol;
-    double new_upper_limit = computeNewUpperLimit(solobj, 0.0, 0.0);
-
-    if (!is_user_solution && !mipsolver.submip)
-      saveReportMipSolution(new_upper_limit);
-    if (new_upper_limit < upper_limit) {
-      ++numImprovingSols;
-      upper_limit = new_upper_limit;
-      optimality_limit =
-          computeNewUpperLimit(solobj, mipsolver.options_mip_->mip_abs_gap,
-                               mipsolver.options_mip_->mip_rel_gap);
-      nodequeue.setOptimalityLimit(optimality_limit);
-      for (HighsMipWorker& worker : workers) {
-        worker.upper_limit = upper_limit;
-        worker.optimality_limit = optimality_limit;
-      }
-      debugSolution.newIncumbentFound();
-      getDomain().propagate();
-      if (!getDomain().infeasible())
-        redcostfixing.propagateRootRedcost(mipsolver);
-
-      // Two calls to printDisplayLine added for completeness,
-      // ensuring that when the root node has an integer solution, a
-      // logging line is issued
-
-      if (getDomain().infeasible()) {
-        pruned_treeweight = 1.0;
-        nodequeue.clear();
-        if (print_display_line)
-          printDisplayLine(solution_source);  // Added for completeness
-        return true;
-      }
-      cliquetable.extractObjCliques(mipsolver);
-      if (getDomain().infeasible()) {
-        pruned_treeweight = 1.0;
-        nodequeue.clear();
-        if (print_display_line)
-          printDisplayLine(solution_source);  // Added for completeness
-        return true;
-      }
-      pruned_treeweight += nodequeue.performBounding(upper_limit);
-      printDisplayLine(solution_source);
-    }
+    updateUpperBound(solobj, solution_source, print_display_line,
+                     is_user_solution);
   } else if (incumbent.empty())
-    // Assigning new incumbent
+    // Assigning new incumbent. The solution must be feasible in the
+    // reduced space, so queryExternalSolution passes the image of a user
+    // solution only if it is
     incumbent = sol;
 
   return true;
+}
+
+void HighsMipSolverData::updateUpperBound(const double solobj,
+                                          const int solution_source,
+                                          const bool print_display_line,
+                                          const bool is_user_solution,
+                                          const bool attained) {
+  assert(!parallelLockActive());
+  assert(solobj < upper_bound);
+  double prev_upper_bound = upper_bound;
+
+  upper_bound = solobj;
+  for (HighsMipWorker& worker : workers) {
+    worker.upper_bound = upper_bound;
+  }
+
+  bool bound_change = upper_bound != prev_upper_bound;
+  if (!mipsolver.submip && bound_change)
+    updatePrimalDualIntegral(lower_bound, lower_bound, prev_upper_bound,
+                             upper_bound);
+
+  const double limit_obj = upperLimitObjective(solobj, attained);
+  double new_upper_limit = computeNewUpperLimit(limit_obj, 0.0, 0.0);
+
+  if (!is_user_solution && !mipsolver.submip)
+    saveReportMipSolution(new_upper_limit);
+  if (new_upper_limit < upper_limit) {
+    ++numImprovingSols;
+    upper_limit = new_upper_limit;
+    optimality_limit =
+        computeNewUpperLimit(limit_obj, mipsolver.options_mip_->mip_abs_gap,
+                             mipsolver.options_mip_->mip_rel_gap);
+    nodequeue.setOptimalityLimit(optimality_limit);
+    for (HighsMipWorker& worker : workers) {
+      worker.upper_limit = upper_limit;
+      worker.optimality_limit = optimality_limit;
+    }
+    debugSolution.newIncumbentFound();
+    getDomain().propagate();
+    if (!getDomain().infeasible())
+      redcostfixing.propagateRootRedcost(mipsolver);
+
+    // Two calls to printDisplayLine added for completeness,
+    // ensuring that when the root node has an integer solution, a
+    // logging line is issued
+
+    if (getDomain().infeasible()) {
+      pruned_treeweight = 1.0;
+      nodequeue.clear();
+      if (print_display_line)
+        printDisplayLine(solution_source);  // Added for completeness
+      return;
+    }
+    cliquetable.extractObjCliques(mipsolver);
+    if (getDomain().infeasible()) {
+      pruned_treeweight = 1.0;
+      nodequeue.clear();
+      if (print_display_line)
+        printDisplayLine(solution_source);  // Added for completeness
+      return;
+    }
+    pruned_treeweight += nodequeue.performBounding(upper_limit);
+    printDisplayLine(solution_source);
+  }
 }
 
 static std::array<char, 22> convertToPrintString(int64_t val) {
@@ -3017,7 +3055,11 @@ void HighsMipSolverData::queryExternalSolution(
       //
       // (reduced_c)^T(reduced_x) = original_sense*[original_offset +
       // (original_c)^T(original_x) - reduced_offset]
-      const auto& user_solution = callback->data_in.user_solution;
+      //
+      // The solution is copied, since the callbacks made by
+      // addIncumbent may change data_in
+      const std::vector<double> user_solution =
+          callback->data_in.user_solution;
       MipViolation original_space_violation;
       HighsCDouble user_solution_quad_objective_value = 0;
       const bool feasible = mipsolver.solutionFeasible(
@@ -3034,18 +3076,66 @@ void HighsMipSolverData::queryExternalSolution(
                                      "User-supplied solution");
         return;
       }
-      std::vector<double> reduced_user_solution;
-      reduced_user_solution =
-          postSolveStack.getReducedPrimalSolution(user_solution);
-      const double reduced_user_solution_objective_value =
+      const HighsOptions& options = *mipsolver.options_mip_;
+      const double offset = mipsolver.model_->offset_;
+      const double user_objective = double(user_solution_quad_objective_value);
+      const double user_solobj =
           double(HighsInt(mipsolver.orig_model_->sense_) *
                      user_solution_quad_objective_value -
-                 mipsolver.model_->offset_);
+                 offset);
+      // Written so that an undefined objective value cannot become the
+      // upper bound
+      if (!(user_solobj < upper_bound)) return;
+      // Whether a is significantly below b, relative to the objective
+      // value including the offset
+      auto significantlyBelow = [&](const double a, const double b) {
+        return b - a >
+               options.mip_feasibility_tolerance * (1 + std::fabs(b + offset));
+      };
       const bool print_display_line = true;
       const bool is_user_solution = true;
-      addIncumbent(reduced_user_solution, reduced_user_solution_objective_value,
-                   kSolutionSourceUserSolution, print_display_line,
-                   is_user_solution);
+      // The image is used as a solution only if it is feasible in the
+      // reduced space, and not worse
+      std::vector<double> image;
+      double image_solobj = kHighsInf;
+      const bool image_feasible =
+          reducedSpaceImage(user_solution, image, image_solobj);
+      if (image_feasible && !significantlyBelow(user_solobj, image_solobj))
+        addIncumbent(image, image_solobj, kSolutionSourceUserSolution,
+                     print_display_line, is_user_solution);
+      // Unless the image has given an upper bound as good, the solution
+      // is feasible in the original space, so it bounds the reduced
+      // problem, and is the solution returned unless a better one is found
+      if (upper_bound < kHighsInf &&
+          !significantlyBelow(user_solobj, upper_bound))
+        return;
+      highsLogUser(options.log_options, HighsLogType::kInfo,
+                   "User solution is %s, so is only used to bound the "
+                   "objective: objective value is %.12g\n",
+                   image_feasible || image.empty()
+                       ? "not retained in the reduced space"
+                       : "infeasible in the reduced space",
+                   user_objective);
+      // Report the solution, as addIncumbent does for one that is used
+      if (mipsolver.callback_->user_callback &&
+          mipsolver.callback_->active[kCallbackMipSolution]) {
+        mipsolver.callback_->clearHighsCallbackOutput();
+        mipsolver.callback_->data_out.mip_solution = user_solution;
+        const bool interrupt = interruptFromCallbackWithData(
+            kCallbackMipSolution, user_objective, "Feasible solution");
+        assert(!interrupt);
+      }
+      mipsolver.solution_ = user_solution;
+      mipsolver.solution_objective_ = user_objective;
+      mipsolver.bound_violation_ = bound_violation_;
+      mipsolver.row_violation_ = row_violation_;
+      mipsolver.integrality_violation_ = integrality_violation_;
+      // The image guides the heuristics, even if it is infeasible in the
+      // reduced space
+      if (!image.empty()) incumbent = image;
+      const bool attained = false;
+      updateUpperBound(user_solobj, kSolutionSourceUserSolution,
+                       print_display_line, is_user_solution, attained);
     }
   }
 }

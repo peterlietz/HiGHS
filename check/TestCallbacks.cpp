@@ -723,3 +723,102 @@ TEST_CASE("issue-3340", "[highs_callback]") {
 
   highs.resetThreadScheduler(true);
 }
+
+TEST_CASE("callback-user-solution-cut-off-by-presolve", "[highs_callback]") {
+  // Model and solution from ERGO-Code/HiGHS issue 3643. Column x6 is
+  // parallel to x2 with a higher cost, so presolve fixes x6 = 0 and
+  // tightens r0 to -x2 + x3 + x4 <= 1. The solution offered has x6 = 1
+  // and x2 = 0: it is feasible with objective 2.25, but its image in the
+  // reduced space violates r0. It must still bound the objective, rather
+  // than being discarded.
+  //
+  // With costs 4 for x5 and 4.25 for x6, the reduced objective is
+  // integral, and the objective value of the solution offered, -0.75, is
+  // not attained in the reduced space. The upper limit must not assume
+  // that the next better solution has objective value at most -2: the
+  // optimum is still -1
+  //
+  // As for any other feasible solution, the MIP solution callback must
+  // report the solution offered
+  struct Offer {
+    std::vector<double> solution;
+    std::vector<double> primal_bound_at_query;
+    std::vector<std::vector<double>> reported_solution;
+    std::vector<double> reported_objective;
+  };
+  const double inf = kHighsInf;
+  HighsLp lp;
+  lp.num_col_ = 6;
+  lp.num_row_ = 3;
+  lp.col_cost_ = {3, 4, 0, -5, 4.5, 7.25};
+  lp.col_lower_.assign(6, 0);
+  lp.col_upper_.assign(6, 1);
+  lp.integrality_.assign(6, HighsVarType::kInteger);
+  lp.row_lower_ = {-inf, 1, -inf};
+  lp.row_upper_ = {25, 1, 1};
+  lp.a_matrix_.format_ = MatrixFormat::kRowwise;
+  lp.a_matrix_.start_ = {0, 4, 7, 9};
+  lp.a_matrix_.index_ = {1, 2, 3, 5, 0, 2, 4, 0, 3};
+  lp.a_matrix_.value_ = {-5, 17, 13, -5, 1, 1, 1, 1, 1};
+  const double optimum = -1;
+  for (const double x6_cost : {7.25, 4.25}) {
+    lp.col_cost_[4] = x6_cost == 7.25 ? 4.5 : 4;
+    lp.col_cost_[5] = x6_cost;
+    const double offered_objective = x6_cost - 5;
+
+    Highs highs;
+    highs.setOptionValue("output_flag", dev_run);
+    highs.setOptionValue("mip_heuristic_effort", 0.0);
+    highs.setOptionValue("mip_heuristic_run_feasibility_jump", false);
+    REQUIRE(highs.passModel(lp) == HighsStatus::kOk);
+    Offer offer;
+    offer.solution = {0, 0, 1, 1, 0, 1};
+    REQUIRE(lp.objectiveValue(offer.solution) == offered_objective);
+    // Offer the solution at the first user-solution query, and record the
+    // primal bound at each query, and the solutions reported
+    highs.setCallback(
+        [](int callback_type, const std::string&,
+           const HighsCallbackOutput* data_out, HighsCallbackInput* data_in,
+           void* user_data) {
+          auto& offer = *static_cast<Offer*>(user_data);
+          if (callback_type == kCallbackMipSolution) {
+            offer.reported_solution.push_back(data_out->mip_solution);
+            offer.reported_objective.push_back(
+                data_out->objective_function_value);
+            return;
+          }
+          if (offer.primal_bound_at_query.empty()) {
+            data_in->user_has_solution = true;
+            data_in->user_solution = offer.solution;
+          }
+          offer.primal_bound_at_query.push_back(data_out->mip_primal_bound);
+        },
+        &offer);
+    REQUIRE(highs.startCallback(kCallbackMipUserSolution) == HighsStatus::kOk);
+    REQUIRE(highs.startCallback(kCallbackMipSolution) == HighsStatus::kOk);
+    REQUIRE(highs.run() == HighsStatus::kOk);
+
+    // The second query is made before the root LP is solved, so the primal
+    // bound is due to the solution offered
+    REQUIRE(offer.primal_bound_at_query.size() >= 2);
+    if (dev_run)
+      for (size_t q = 0; q < offer.primal_bound_at_query.size(); q++)
+        printf("primal bound at query %zu: %g\n", q,
+               offer.primal_bound_at_query[q]);
+    REQUIRE(offer.primal_bound_at_query[1] <= offered_objective);
+    bool offered_solution_reported = false;
+    for (size_t r = 0; r < offer.reported_solution.size(); r++)
+      if (offer.reported_solution[r] == offer.solution &&
+          offer.reported_objective[r] == offered_objective)
+        offered_solution_reported = true;
+    REQUIRE(offered_solution_reported);
+    REQUIRE(highs.getModelStatus() == HighsModelStatus::kOptimal);
+    const double objective = highs.getInfo().objective_function_value;
+    REQUIRE(std::fabs(objective - optimum) < 1e-6);
+    // The solution returned must be the one whose objective is reported
+    REQUIRE(std::fabs(lp.objectiveValue(highs.getSolution().col_value) -
+                      objective) < 1e-6);
+  }
+
+  Highs::resetGlobalScheduler(true);
+}
