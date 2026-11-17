@@ -15,7 +15,7 @@ class HybridHybridFormatHandler : public FormatHandler {
   void initClique() override;
   void assembleFrontal(Int i, Int j, double val) override;
   void assembleChild(Int child_sn, const double* child) override;
-  Int denseFactorise(double reg_thresh) override;
+  Int denseFactorise(const double* reg_thresh) override;
   void extremeEntries() override;
 
   void assembleFrontalMultiple(Int& num, const double* child, Int nc,

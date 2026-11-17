@@ -8,6 +8,7 @@
 #include "HighsExternalApi.h"
 #include "catch.hpp"
 #include "io/Filereader.h"
+#include "ipm/hipo/factorhighs/DenseFact.h"
 #include "ipm/hipo/factorhighs/FactorHighs.h"
 #include "ipm/hipo/factorhighs/FactorHighs_c_api.h"
 #include "ipm/hipo/ipm/Solver.h"
@@ -404,4 +405,123 @@ TEST_CASE("test-hipo-serial-blas", "[highs_hipo]") {
 
   HighsExtras::blas::openblas_set_num_threads(initial_threads);
   highs.resetThreadScheduler(true);
+}
+
+// Factorise the dense symmetric matrix M (n x n, column-major, only the upper
+// triangle is used) with the dense kernel, with pivoting on and the static
+// regularisation that HiPO uses for the normal equations, and per-pivot
+// thresholds for dynamic regularisation. Return the pivots used (in the order
+// of elimination) and the regularisation recorded for them.
+struct DenseKernelResult {
+  HighsInt info;
+  std::vector<double> pivot;
+  std::vector<double> totalreg;
+  std::vector<HighsInt> swaps;
+  std::vector<double> pivot_2x2;
+};
+
+static DenseKernelResult factoriseDenseKernel(HighsInt n, std::vector<double> M,
+                                              std::vector<double> thresh,
+                                              bool pivoting = true) {
+  hipo::FHoptions options;
+  options.reg_p = 1e-12;
+  options.reg_d = 1e-10;
+  options.pivoting = pivoting;
+  std::vector<HighsInt> sign(n, 1);
+  DenseKernelResult result;
+  result.totalreg.assign(n, -1.0);
+  result.swaps.assign(n, -1);
+  result.pivot_2x2.assign(n, 0.0);
+  hipo::DataCollector data;
+  result.info = hipo::denseFactK(
+      'U', n, M.data(), n, sign.data(), thresh.data(), result.totalreg.data(),
+      result.swaps.data(), result.pivot_2x2.data(), data, options);
+  // the kernel stores the reciprocals of the 1x1 pivots on the diagonal
+  for (HighsInt j = 0; j < n; ++j) result.pivot.push_back(1.0 / M[j + n * j]);
+  return result;
+}
+
+TEST_CASE("hipo-dense-kernel-static-regularisation", "[highs_hipo]") {
+  if (!HighsExternalApi::isAvailable<HighsExtras::hipo>()) return;
+  // Static regularisation is added once to a pivot, and totalreg records it.
+  for (bool pivoting : {true, false}) {
+    DenseKernelResult res = factoriseDenseKernel(1, {1.0}, {1e-24}, pivoting);
+    REQUIRE(res.info == 0);
+    REQUIRE(std::abs(res.totalreg[0] - 1e-12) < 1e-15);
+    REQUIRE(std::abs(res.pivot[0] - (1.0 + res.totalreg[0])) < 1e-15);
+  }
+}
+
+TEST_CASE("hipo-dense-kernel-dynamic-regularisation", "[highs_hipo]") {
+  if (!HighsExternalApi::isAvailable<HighsExtras::hipo>()) return;
+  // Normal equations [[a, a], [a, a]]: elimination cancels the second pivot to
+  // rounding noise. With the relative threshold 1e-14 * a, it is replaced by
+  // the threshold, and totalreg records the whole perturbation, so that the
+  // factorisation is one of M + diag(totalreg).
+  for (double a : {1e10, 5e3, 2e4}) {
+    const double thresh = 1e-14 * a;
+    DenseKernelResult res =
+        factoriseDenseKernel(2, {a, 0.0, a, a}, {thresh, thresh});
+    REQUIRE(res.info == 0);
+    REQUIRE(res.swaps[0] == 0);
+    REQUIRE(res.pivot_2x2[0] == 0.0);
+    REQUIRE(res.totalreg[0] == (a + 1e-12) - a);
+    REQUIRE(std::abs(res.pivot[1] - thresh) <= 1e-15 * thresh);
+    // the cancelled pivot was at most a few ulps of a
+    REQUIRE(std::abs(res.totalreg[1] - thresh) <= 1e-15 * a);
+  }
+
+  // A cancelled pivot of the wrong sign is regularised too, instead of being
+  // used with its static regularisation (which made it exactly zero here).
+  DenseKernelResult res = factoriseDenseKernel(1, {-2e-12}, {5e-11});
+  REQUIRE(res.info == 0);
+  REQUIRE(std::abs(res.pivot[0] - 5e-11) <= 1e-15 * 5e-11);
+  REQUIRE(res.totalreg[0] == 5e-11 + 2e-12);
+}
+
+TEST_CASE("hipo-factor-dynamic-regularisation-recorded", "[highs_hipo]") {
+  // Through FHsolver, on normal equations whose second pivot cancels to
+  // rounding noise: getRegularisation includes the dynamic regularisation of
+  // that pivot, so the factorisation is one of M + diag(reg), and a step of
+  // iterative refinement against that matrix doesn't undo the regularisation.
+  const HighsInt n = 2;
+  const double a = 1e10;
+  const double e = 2e-6;
+  // M = [[a + e, a], [a, a]], lower triangle, CSC
+  std::vector<HighsInt> ptr = {0, 2, 3};
+  std::vector<HighsInt> rows = {0, 1, 1};
+  std::vector<double> vals = {a + e, a, a};
+  std::vector<HighsInt> signs = {1, 1};
+  std::vector<HighsInt> perm = {0, 1};
+
+  if (FactorHighs_initialise(0) != 0) return;
+  std::vector<double> reg(n);
+  std::vector<double> x = {1.0, 0.0};
+  std::vector<double> dx(n);
+  {
+    hipo::FHsolver FH;
+    hipo::Symbolic S;
+    FH.setRegularisation(1e-12, 1e-10);
+    FH.setDynamicRegularisation(hipo::kDynamicDiagRelSpd);
+    REQUIRE(FH.analyse(S, n, ptr[n], rows.data(), ptr.data(), signs.data(),
+                       perm.data()) == 0);
+    REQUIRE(FH.factorise(S, n, ptr[n], rows.data(), ptr.data(), vals.data()) ==
+            0);
+    FH.getRegularisation(reg.data());
+    REQUIRE(FH.solve(x.data()) == 0);
+    // residual of b = (1, 0) against M + diag(reg), and its correction
+    dx[0] = 1.0 - ((a + e + reg[0]) * x[0] + a * x[1]);
+    dx[1] = 0.0 - (a * x[0] + (a + reg[1]) * x[1]);
+    REQUIRE(FH.solve(dx.data()) == 0);
+  }
+  FactorHighs_terminate();
+
+  // x is about (1e4, -1e4); recording only the static regularisation made
+  // the correction about as large as x
+  REQUIRE(std::abs(dx[0]) <= 0.05 * std::abs(x[0]));
+  REQUIRE(std::abs(dx[1]) <= 0.05 * std::abs(x[1]));
+  const double thresh = hipo::kDynamicDiagRelSpd * a;
+  // a + e + 1e-12 rounds to a + e, and the second pivot is regularised
+  REQUIRE(std::min(reg[0], reg[1]) == 0.0);
+  REQUIRE(std::abs(std::max(reg[0], reg[1]) - thresh) <= 1e-15 * a);
 }

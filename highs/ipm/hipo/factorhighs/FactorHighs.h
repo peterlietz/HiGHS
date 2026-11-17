@@ -133,6 +133,14 @@ class FHsolver {
   // If regularisation is already added to the matrix, ignore.
   void setRegularisation(double reg_p = 0.0, double reg_d = 0.0);
 
+  // With pivoting on, a pivot whose entries in the diagonal block are all below
+  // a threshold is replaced by the threshold (dynamic regularisation). The
+  // threshold is kDynamicDiagCoeff times the 1-norm of the matrix, or, if rel
+  // is positive and this is larger, rel times the original diagonal entry of
+  // the pivot. rel = 0 is the default; kDynamicDiagRelSpd suits symmetric
+  // positive definite matrices.
+  void setDynamicRegularisation(double rel = 0.0);
+
   // Extract the regularisation values used, including static and dynamic.
   void getRegularisation(double* reg);
 
