@@ -72,9 +72,11 @@ void getLpKktFailures(const HighsOptions& options, const HighsLp& lp,
                       const HighsSolution& solution, const HighsBasis& basis,
                       HighsInfo& highs_info,
                       HighsPrimalDualErrors* primal_dual_errors,
-                      const bool get_residuals) {
+                      const bool get_residuals,
+                      const double reference_objective_offset) {
   getKktFailures(options, false, lp, lp.col_cost_, solution, highs_info,
-                 get_residuals);
+                 get_residuals,
+                 reference_objective_offset);
   if (primal_dual_errors != nullptr) {
     getPrimalDualBasisErrors(options, lp, solution, basis, *primal_dual_errors);
     getPrimalDualGlpsolErrors(options, lp, lp.col_cost_, solution,
@@ -86,7 +88,8 @@ void getLpKktFailures(const HighsOptions& options, const HighsLp& lp,
 void getKktFailures(const HighsOptions& options, const bool is_qp,
                     const HighsLp& lp, const std::vector<double>& gradient,
                     const HighsSolution& solution, HighsInfo& highs_info,
-                    const bool get_residuals) {
+                    const bool get_residuals,
+                    const double reference_objective_offset) {
   double primal_feasibility_tolerance = options.primal_feasibility_tolerance;
   double dual_feasibility_tolerance = options.dual_feasibility_tolerance;
   double mip_feasibility_tolerance = options.mip_feasibility_tolerance;
@@ -511,10 +514,13 @@ void getKktFailures(const HighsOptions& options, const bool is_qp,
     const double abs_objective_difference =
         std::fabs(primal_objective_value - dual_objective_value);
     primal_dual_objective_error = abs_objective_difference;
+    const double offset = std::isfinite(reference_objective_offset)
+                              ? reference_objective_offset
+                              : lp.offset_;
     const double primal_objective_value_less_offset =
-        primal_objective_value - lp.offset_;
+        primal_objective_value - offset;
     const double dual_objective_value_less_offset =
-        dual_objective_value - lp.offset_;
+        dual_objective_value - offset;
     double denominator = 1.0 + std::fabs(primal_objective_value_less_offset) +
                          std::fabs(dual_objective_value_less_offset);
     primal_dual_objective_error = primal_dual_objective_error / denominator;
@@ -1160,16 +1166,40 @@ bool getComplementarityViolations(const HighsLp& lp,
 
 void lpNoBasisKktCheck(HighsModelStatus& model_status, HighsInfo& info,
                        const HighsLp& lp, const HighsSolution& solution,
-                       const HighsOptions& options,
-                       const std::string& message) {
+                       const HighsOptions& options, const std::string& message,
+                       const double reference_objective_offset) {
   HighsBasis basis;
-  lpKktCheck(model_status, info, lp, solution, basis, options, message);
+  lpKktCheck(model_status, info, lp, solution, basis, options, message,
+             reference_objective_offset);
+}
+
+double kktToleranceRelativeViolation(const HighsOptions& options,
+                                     const HighsInfo& info) {
+  double primal_feasibility_tolerance = options.primal_feasibility_tolerance;
+  double dual_feasibility_tolerance = options.dual_feasibility_tolerance;
+  double primal_residual_tolerance = options.primal_residual_tolerance;
+  double dual_residual_tolerance = options.dual_residual_tolerance;
+  double optimality_tolerance = options.optimality_tolerance;
+  if (options.kkt_tolerance != kDefaultKktTolerance) {
+    primal_feasibility_tolerance = options.kkt_tolerance;
+    dual_feasibility_tolerance = options.kkt_tolerance;
+    primal_residual_tolerance = options.kkt_tolerance;
+    dual_residual_tolerance = options.kkt_tolerance;
+    optimality_tolerance = options.kkt_tolerance;
+  }
+  return std::max(
+      {info.max_relative_primal_infeasibility / primal_feasibility_tolerance,
+       info.max_relative_dual_infeasibility / dual_feasibility_tolerance,
+       info.max_relative_primal_residual_error / primal_residual_tolerance,
+       info.max_relative_dual_residual_error / dual_residual_tolerance,
+       info.primal_dual_objective_error / optimality_tolerance});
 }
 
 void lpKktCheck(HighsModelStatus& model_status, HighsInfo& info,
                 const HighsLp& lp, const HighsSolution& solution,
                 const HighsBasis& basis, const HighsOptions& options,
-                const std::string& message) {
+                const std::string& message,
+                const double reference_objective_offset) {
   if (!solution.value_valid) return;
   const bool has_dual_values = solution.dual_valid;
   const HighsLogOptions& log_options = options.log_options;
@@ -1187,7 +1217,8 @@ void lpKktCheck(HighsModelStatus& model_status, HighsInfo& info,
   }
   info.objective_function_value = lp.objectiveValue(solution.col_value);
   const bool get_residuals = !basis.valid;
-  getLpKktFailures(options, lp, solution, basis, info, nullptr, get_residuals);
+  getLpKktFailures(options, lp, solution, basis, info, nullptr, get_residuals,
+                   reference_objective_offset);
   if (model_status == HighsModelStatus::kOptimal)
     reportKktFailures(lp, options, info, message);
   // get_residuals is false when there is a valid basis, since

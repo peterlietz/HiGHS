@@ -1,5 +1,6 @@
 #include "Solver.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -133,6 +134,8 @@ void Solver::reset() {
   alpha_dual_ = 0.0;
   sigma_ = 0.0;
   regul_ = Regularisation{};
+  kkt_best_violation_ = kHighsInf;
+  kkt_checks_without_progress_ = 0;
 
   LS_.reset();
   it_.reset();
@@ -1165,7 +1168,7 @@ shouldTerminate Solver::checkBadIter() {
           setStatus2(kStatusNoProgress);
           resetToBestIter(iter_);
         } else {
-          if (checkTerminationKkt()) {
+          if (checkTerminationKkt(true)) {
             logger_.printw(
                 "HiPO stagnated but HiGHS considers the solution "
                 "acceptable\n");
@@ -1217,7 +1220,7 @@ shouldTerminate Solver::checkTermination() {
   return terminate;
 }
 
-isSuccess Solver::checkTerminationKkt() {
+isSuccess Solver::checkTerminationKkt(bool allow_tolerance_violation) {
   if (model_.qp()) {
     // Not yet implemented for QP
     logger_.printInfo("kktCheck skipped for QP\n");
@@ -1241,10 +1244,47 @@ isSuccess Solver::checkTerminationKkt() {
                              model_.constraintsOrig(), *this, model_status,
                              highs_solution);
 
+    // HiGHS's relative primal-dual objective error leaves out the offset,
+    // but the offset of the LP that HiPO solves is not that of the model on
+    // which HiGHS finally assesses the solution: presolve moves the cost of
+    // fixed columns into it. If presolve's offset cancels the rest of the
+    // objective, the offset-free objectives of this LP are large while those
+    // of the original model are about 0, and a point accepted here fails
+    // HiGHS's check after postsolve. So assess the point as that check will,
+    // leaving out the offset of that model (reference_objective_offset_).
     lpNoBasisKktCheck(model_status, highs_info, *model_.lpOrig(),
-                      highs_solution, Hoptions_, "During HiPO solve");
+                      highs_solution, Hoptions_, "During HiPO solve",
+                      reference_objective_offset_);
 
-    if (model_status == HighsModelStatus::kOptimal) {
+    // lpNoBasisKktCheck keeps the status optimal as long as no tolerance is
+    // violated by more than a factor 100. That leniency is meant for the
+    // final status, not for deciding when to stop: postsolve can push such
+    // a point over the limit. So, unless HiPO has stagnated, require every
+    // KKT error to be within its tolerance, or accept what HiGHS rates
+    // optimal once the errors have stopped decreasing.
+    const bool optimal = model_status == HighsModelStatus::kOptimal;
+    bool accept = optimal;
+    if (!allow_tolerance_violation) {
+      const double violation =
+          kktToleranceRelativeViolation(Hoptions_, highs_info);
+      if (violation < kKktProgressFactor * kkt_best_violation_) {
+        kkt_best_violation_ = violation;
+        kkt_checks_without_progress_ = 0;
+      } else {
+        kkt_best_violation_ = std::min(kkt_best_violation_, violation);
+        ++kkt_checks_without_progress_;
+      }
+      const bool stalled =
+          kkt_checks_without_progress_ >= kKktChecksWithoutProgress;
+      accept = optimal && (violation <= 1.0 || stalled);
+      if (accept && violation > 1.0)
+        logger_.printInfo(
+            "KKT errors have stopped decreasing at %.3g times their "
+            "tolerances\n",
+            violation);
+    }
+
+    if (accept) {
       logger_.printInfo("Check successful\n");
       return true;
     } else

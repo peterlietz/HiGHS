@@ -65,17 +65,23 @@ void getKktFailures(const HighsOptions& options, const HighsModel& model,
 void getQpKktFailures(const HighsOptions& options, const HighsModel& model,
                       const HighsSolution& solution, HighsInfo& highs_info);
 
+// reference_objective_offset: the offset to leave out of the objectives
+// when normalising the primal-dual objective error. It is that of the model
+// that HiGHS finally assesses, which differs from lp.offset_ when lp is a
+// presolved LP. kHighsInf: lp.offset_
 void getLpKktFailures(const HighsOptions& options, const HighsLp& lp,
                       const HighsSolution& solution, const HighsBasis& basis,
                       HighsInfo& highs_info,
                       HighsPrimalDualErrors* primal_dual_errors = nullptr,
-                      const bool get_residuals = false);
+                      const bool get_residuals = false,
+                      const double reference_objective_offset = kHighsInf);
 
 // Inner getKktFailures
 void getKktFailures(const HighsOptions& options, const bool is_qp,
                     const HighsLp& lp, const std::vector<double>& gradient,
                     const HighsSolution& solution, HighsInfo& highs_info,
-                    const bool get_residuals = false);
+                    const bool get_residuals = false,
+                    const double reference_objective_offset = kHighsInf);
 
 void getVariableKktFailures(const double primal_feasibility_tolerance,
                             const double dual_feasibility_tolerance,
@@ -90,12 +96,20 @@ void getVariableKktFailures(const double primal_feasibility_tolerance,
 
 void lpNoBasisKktCheck(HighsModelStatus& model_status, HighsInfo& info,
                        const HighsLp& lp, const HighsSolution& solution,
-                       const HighsOptions& options, const std::string& message);
+                       const HighsOptions& options, const std::string& message,
+                       const double reference_objective_offset = kHighsInf);
 
 void lpKktCheck(HighsModelStatus& model_status, HighsInfo& info,
                 const HighsLp& lp, const HighsSolution& solution,
                 const HighsBasis& basis, const HighsOptions& options,
-                const std::string& message);
+                const std::string& message,
+                const double reference_objective_offset = kHighsInf);
+
+// The largest of the relative KKT errors in info (primal and dual
+// infeasibilities and residuals, and the primal-dual objective error), each
+// divided by its tolerance (kkt_tolerance if that is set)
+double kktToleranceRelativeViolation(const HighsOptions& options,
+                                     const HighsInfo& info);
 
 std::vector<double> getEffectiveCosts(const HighsLp& lp,
                                       const HighsOptions& options);

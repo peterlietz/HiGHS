@@ -40,6 +40,11 @@ class HighsLpSolverObject {
   HighsTimer& timer_;
   HighsProfiling* profiling_ = nullptr;
   HighsModelStatus model_status_ = HighsModelStatus::kNotset;
+  // Objective offset of the model that HiGHS will finally assess, in the
+  // objective sense of lp_. It differs from lp_.offset_ when lp_ is the
+  // presolved LP, since presolve moves the cost of fixed columns into the
+  // offset. kHighsInf if unknown
+  double reference_objective_offset_ = kHighsInf;
   void setProfiling(HighsProfiling* profiling) {
     assert(profiling);
     profiling_ = profiling;
