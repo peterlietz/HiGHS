@@ -14,6 +14,8 @@
 
 #include <cmath>
 #include <iostream>
+#include <string>
+#include <vector>
 
 #include "ipm/ipx/lp_solver.h"
 
@@ -94,4 +96,101 @@ TEST_CASE("test-ipx", "[highs_ipx]") {
   // hack to reset scheduler
   Highs h;
   h.resetThreadScheduler(true);
+}
+
+// Runs IPX's main IPM on a Netlib LP from the starting point x = x0 (within
+// the bounds), y = 0 and complementarity products mu, whose residuals are
+// large compared with mu.
+static ipx::Info ipxFromPoorStart(const std::string& model, const double mu,
+                                  const double x0) {
+  Highs highs;
+  highs.setOptionValue("output_flag", false);
+  REQUIRE(highs.readModel(std::string(HIGHS_DIR) + "/check/instances/" +
+                          model) == HighsStatus::kOk);
+  const HighsLp& lp = highs.getLp();
+  const Int n = lp.num_col_;
+  const Int m = lp.num_row_;
+  HighsSparseMatrix a = lp.a_matrix_;
+  a.ensureColwise();
+  std::vector<double> b(m);
+  std::vector<char> type(m);
+  for (Int i = 0; i < m; i++) {
+    if (lp.row_lower_[i] == lp.row_upper_[i]) {
+      type[i] = '=';
+      b[i] = lp.row_upper_[i];
+    } else if (lp.row_lower_[i] <= -kHighsInf) {
+      type[i] = '<';
+      b[i] = lp.row_upper_[i];
+    } else {
+      REQUIRE(lp.row_upper_[i] >= kHighsInf);
+      type[i] = '>';
+      b[i] = lp.row_lower_[i];
+    }
+  }
+  std::vector<double> l(n), u(n);
+  for (Int j = 0; j < n; j++) {
+    l[j] = lp.col_lower_[j] <= -kHighsInf ? -INFINITY : lp.col_lower_[j];
+    u[j] = lp.col_upper_[j] >= kHighsInf ? INFINITY : lp.col_upper_[j];
+  }
+  std::vector<Int> a_start(a.start_.begin(), a.start_.end());
+  std::vector<Int> a_index(a.index_.begin(), a.index_.end());
+
+  highs::parallel::initialize_scheduler();
+  ipx::LpSolver lps;
+  ipx::Parameters parameters;
+  parameters.display = dev_run;
+  parameters.highs_logging = false;
+  parameters.run_crossover = 0;
+  parameters.dualize = 0;  // a starting point needs the primal model
+  parameters.time_limit = kHighsInf;
+  lps.SetParameters(parameters);
+  HighsCallback callback(nullptr);
+  lps.SetCallback(&callback);
+  REQUIRE(lps.LoadModel(n, 0.0, lp.col_cost_.data(), l.data(), u.data(), m,
+                        a_start.data(), a_index.data(), a.value_.data(),
+                        b.data(), type.data()) == 0);
+
+  std::vector<double> x(n), xl(n), xu(n), zl(n), zu(n);
+  std::vector<double> slack(m, 0.0), y(m, 0.0);
+  for (Int j = 0; j < n; j++) {
+    x[j] = std::min(std::max(x0, l[j]), u[j]);
+    xl[j] = std::isfinite(l[j]) ? x[j] - l[j] : INFINITY;
+    xu[j] = std::isfinite(u[j]) ? u[j] - x[j] : INFINITY;
+    zl[j] = std::isfinite(l[j]) ? (xl[j] > 0 ? mu / xl[j] : 1.0) : 0.0;
+    zu[j] = std::isfinite(u[j]) ? (xu[j] > 0 ? mu / xu[j] : 1.0) : 0.0;
+  }
+  std::vector<double> ax(m, 0.0);
+  for (Int j = 0; j < n; j++)
+    for (Int k = a_start[j]; k < a_start[j + 1]; k++)
+      ax[a_index[k]] += a.value_[k] * x[j];
+  for (Int i = 0; i < m; i++) {
+    if (type[i] == '<') slack[i] = std::max(b[i] - ax[i], 1.0);
+    if (type[i] == '>') slack[i] = std::min(b[i] - ax[i], -1.0);
+  }
+  REQUIRE(lps.LoadIPMStartingPoint(x.data(), xl.data(), xu.data(),
+                                   slack.data(), y.data(), zl.data(),
+                                   zu.data()) == 0);
+  lps.Solve();
+  const ipx::Info info = lps.GetInfo();
+  if (dev_run)
+    printf("%s: IPX status_ipm %d after %d iterations\n", model.c_str(),
+           (int)info.status_ipm, (int)info.iter);
+
+  // hack to reset scheduler
+  Highs h;
+  h.resetThreadScheduler(true);
+  return info;
+}
+
+TEST_CASE("ipx-rebalancing-short-steps", "[highs_ipx]") {
+  // The first steps are 2e-3 to 3e-2 long while they reduce pinf and dinf
+  // faster than mu: the main IPM continues through them to the optimum
+  const ipx::Info afiro = ipxFromPoorStart("afiro.mps", 0.1, 1.0);
+  REQUIRE(afiro.status_ipm == IPX_STATUS_optimal);
+
+  // The steps are 1e-10 long and leave pinf and dinf where they are while mu
+  // grows: the main IPM stops after five of them
+  const ipx::Info adlittle = ipxFromPoorStart("adlittle.mps", 1e-2, 1.0);
+  REQUIRE(adlittle.status_ipm == IPX_STATUS_no_progress);
+  REQUIRE(adlittle.iter == 5);
 }

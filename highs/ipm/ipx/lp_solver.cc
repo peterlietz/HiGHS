@@ -550,6 +550,9 @@ void LpSolver::RunMainIPM(IPM& ipm) {
     Timer timer;
     ipm.PrintHeader();
     ipm.maxiter(control_.ipm_maxiter());
+    // No progress ends the solve here (in the initial IPM it only triggers the
+    // switch to the main IPM), so rebalancing steps are tolerated.
+    ipm.tolerate_rebalancing(true);
     ipm.Driver(&kkt, iterate_.get(), &info_);
     info_.time_ipm2 = timer.Elapsed();
 }
