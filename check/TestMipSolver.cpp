@@ -2907,3 +2907,84 @@ TEST_CASE("issue-3768", "[highs_test_mip_solver]") {
   REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
   h.resetThreadScheduler(true);
 }
+
+TEST_CASE("mip-restart-root-ipm", "[highs_test_mip_solver]") {
+  // These models restart with mip_lp_solver = ipm. By default, the root LP
+  // after a restart starts from the root basis carried over into the
+  // restarted model. With mip_restart_root_ipm, that basis is discarded, so
+  // every root LP is solved without a basis, by the IPM. That changes the
+  // path of the search, but not the optimal objective value. With the
+  // default mip_lp_solver, the option has no effect, and a warning says so.
+  //
+  // With the MIP timing bit of highs_analysis_level, each root LP solve is
+  // logged as "start first LP solve (with basis)" or "(without basis)"
+  auto countOf = [](const std::string& log, const std::string& text) {
+    HighsInt count = 0;
+    for (size_t pos = log.find(text); pos != std::string::npos;
+         pos = log.find(text, pos + 1))
+      count++;
+    return count;
+  };
+  const std::string no_effect =
+      "Option mip_restart_root_ipm has no effect unless mip_lp_solver";
+  for (const std::string model : {"bell5", "lseu", "rgn", "issue-2173"}) {
+    const std::string filename =
+        std::string(HIGHS_DIR) + "/check/instances/" + model + ".mps";
+    double objective[3];
+    // k = 0: mip_lp_solver = ipm; k = 1: also mip_restart_root_ipm; k = 2:
+    // mip_restart_root_ipm with the default mip_lp_solver (only for lseu,
+    // which restarts with it)
+    const HighsInt num_k = model == "lseu" ? 3 : 2;
+    for (HighsInt k = 0; k < num_k; k++) {
+      std::string log;
+      Highs h;
+      // Logging must be on for the callback to see the messages
+      h.setOptionValue("log_to_console", dev_run);
+      h.setOptionValue("log_dev_level", kHighsLogDevLevelInfo);
+      h.setOptionValue("highs_analysis_level", kHighsAnalysisLevelMipTime);
+      h.setOptionValue("mip_rel_gap", 0);
+      if (k < 2) h.setOptionValue("mip_lp_solver", "ipm");
+      if (k) h.setOptionValue("mip_restart_root_ipm", true);
+      REQUIRE(
+          h.setCallback([&log](int callback_type, const std::string& message,
+                               const HighsCallbackOutput*, HighsCallbackInput*,
+                               void*) {
+            if (callback_type == kCallbackLogging) log += message;
+          }) == HighsStatus::kOk);
+      REQUIRE(h.startCallback(kCallbackLogging) == HighsStatus::kOk);
+      REQUIRE(h.readModel(filename) == HighsStatus::kOk);
+      REQUIRE(h.run() == HighsStatus::kOk);
+      REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
+      objective[k] = h.getInfo().objective_function_value;
+      const HighsInt num_restart =
+          countOf(log, "inactive integer columns, restarting");
+      const HighsInt num_with_basis =
+          countOf(log, "start first LP solve (with basis)");
+      const HighsInt num_without_basis =
+          countOf(log, "start first LP solve (without basis)");
+      const HighsInt num_discarded =
+          countOf(log, "without the carried over basis");
+      INFO(model << ", k = " << k << ": " << num_restart
+                 << " restarts; root LPs with basis " << num_with_basis
+                 << ", without basis " << num_without_basis
+                 << "; carried-over basis discarded " << num_discarded);
+      REQUIRE(num_restart > 0);
+      REQUIRE(num_with_basis + num_without_basis == num_restart + 1);
+      if (k == 1) {
+        // Every root LP is solved without a basis
+        REQUIRE(num_with_basis == 0);
+        REQUIRE(num_discarded > 0);
+        REQUIRE(countOf(log, no_effect) == 0);
+      } else {
+        // A root LP after a restart starts from the carried-over basis
+        REQUIRE(num_with_basis > 0);
+        REQUIRE(num_discarded == 0);
+        REQUIRE(countOf(log, no_effect) == (k == 2 ? 1 : 0));
+      }
+      h.resetGlobalScheduler(true);
+    }
+    for (HighsInt k = 1; k < num_k; k++)
+      REQUIRE(std::fabs(objective[0] - objective[k]) <=
+              1e-6 * (1 + std::fabs(objective[0])));
+  }
+}

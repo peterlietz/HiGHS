@@ -769,6 +769,14 @@ void HighsMipSolverData::init() {
   heuristic_effort = mipsolver.options_mip_->mip_heuristic_effort;
   detectSymmetries = mipsolver.options_mip_->mip_detect_symmetry;
 
+  if (!mipsolver.submip && mipsolver.options_mip_->mip_restart_root_ipm &&
+      !useIpm(mipsolver.options_mip_->mip_lp_solver))
+    highsLogUser(mipsolver.options_mip_->log_options, HighsLogType::kWarning,
+                 "Option mip_restart_root_ipm has no effect unless "
+                 "mip_lp_solver is \"%s\", \"%s\" or \"%s\" (not \"%s\")\n",
+                 kIpmString.c_str(), kIpxString.c_str(), kHipoString.c_str(),
+                 mipsolver.options_mip_->mip_lp_solver.c_str());
+
   firstlpsolobj = -kHighsInf;
   rootlpsolobj = -kHighsInf;
   analyticCenterComputed = false;
@@ -2244,8 +2252,21 @@ restart:
         mipsolver.solution_objective_,
         kExternalMipSolutionQueryOriginEvaluateRootNode0);
 
+  // After a restart, the root basis carried over into the restarted model
+  // can be a poor start for dual simplex on a dual degenerate model, so
+  // optionally discard it: without a basis, the root LP is solved like the
+  // first one, with an interior point method if mip_lp_solver asks for one
+  const bool restart_root_ipm = numRestarts > 0 && !mipsolver.submip &&
+                                mipsolver.options_mip_->mip_restart_root_ipm &&
+                                useIpm(mipsolver.options_mip_->mip_lp_solver);
+  if (restart_root_ipm && firstrootbasis.valid)
+    highsLogDev(mipsolver.options_mip_->log_options, HighsLogType::kInfo,
+                "Solving the root LP after restart %d without the carried over "
+                "basis, using mip_lp_solver = %s\n",
+                int(numRestarts),
+                mipsolver.options_mip_->mip_lp_solver.c_str());
   // check if only root presolve is allowed
-  if (firstrootbasis.valid)
+  if (firstrootbasis.valid && !restart_root_ipm)
     getLp().getLpSolver().setBasis(firstrootbasis,
                                    "HighsMipSolverData::evaluateRootNode");
   else if (mipsolver.options_mip_->mip_root_presolve_only)
