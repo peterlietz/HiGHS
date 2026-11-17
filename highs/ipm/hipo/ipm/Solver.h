@@ -256,9 +256,14 @@ class Solver {
   //        |        |    0.90    |
   //  0.0   |--------|------------|
   //
+  // While the iterate is primal or dual infeasible, the affine scaling
+  // direction uses the sigma of the correctors instead of 0.01: short steps
+  // then mean that the direction cannot remove the infeasibility, and a
+  // direction aimed at a much smaller mu keeps being blocked.
   // ===================================================================================
   void sigmaAffine();
   void sigmaCorrectors();
+  double sigmaFromStepsizes() const;
 
   // ===================================================================================
   // Compute the residuals for the computation of multiple centrality
