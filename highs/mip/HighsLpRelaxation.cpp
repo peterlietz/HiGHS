@@ -9,6 +9,7 @@
 
 #include <algorithm>
 
+#include "HighsExternalApi.h"
 #include "lp_data/HighsSolve.h"  // For useIpm()
 #include "mip/HighsCutPool.h"
 #include "mip/HighsDomain.h"
@@ -19,6 +20,35 @@
 #include "mip/MipTimer.h"
 #include "util/HighsCDouble.h"
 #include "util/HighsHash.h"
+
+namespace {
+// Pass the user's HiPO options to an instance of Highs that may run HiPO
+void passHipoOptions(const HighsOptions& options, Highs& highs) {
+  for (const OptionRecord* record : options.records) {
+    if (record->name.compare(0, 5, "hipo_") != 0) continue;
+    switch (record->type) {
+      case HighsOptionType::kBool:
+        highs.setOptionValue(
+            record->name, *static_cast<const OptionRecordBool*>(record)->value);
+        break;
+      case HighsOptionType::kInt:
+        highs.setOptionValue(
+            record->name, *static_cast<const OptionRecordInt*>(record)->value);
+        break;
+      case HighsOptionType::kDouble:
+        highs.setOptionValue(
+            record->name,
+            *static_cast<const OptionRecordDouble*>(record)->value);
+        break;
+      case HighsOptionType::kString:
+        highs.setOptionValue(
+            record->name,
+            *static_cast<const OptionRecordString*>(record)->value);
+        break;
+    }
+  }
+}
+}  // namespace
 
 void HighsLpRelaxation::setProfiling(HighsProfiling* profiling) {
   assert(profiling);
@@ -1366,6 +1396,7 @@ HighsLpRelaxation::Status HighsLpRelaxation::run(bool resolve_on_error) {
         Highs ipm;
         ipm.setProfiling(mipsolver.profiling_);
         ipm.setOptionValue("output_flag", false);
+        passHipoOptions(*mipsolver.options_mip_, ipm);
         // check if only root presolve is allowed
         const bool use_presolve =
             !mipsolver.options_mip_->mip_root_presolve_only;
@@ -1410,18 +1441,59 @@ HighsLpRelaxation::Status HighsLpRelaxation::run(bool resolve_on_error) {
           (void)output_flag;
           ipm.setOptionValue("output_flag", !mipsolver.submip);
         }
+        // Don't let the IPM solves run beyond the MIP time limit
+        auto setIpmTimeLimit = [&]() {
+          ipm.setOptionValue(
+              "time_limit",
+              std::max(ipm.getRunTime() + mipsolver.options_mip_->time_limit -
+                           mipsolver.timer_.read(),
+                       0.0));
+        };
+        setIpmTimeLimit();
         mipsolver.profiling_->solveCall("LP3", mipsolver.submip);
         ipm.optimizeLp();
         if (ipm_logging) ipm.setOptionValue("output_flag", false);
-        if (use_hipo && !ipm.getBasis().valid) {
-          // HiPO has failed to get a solution, so try IPX
-          highsLogDev(mipsolver.options_mip_->log_options, HighsLogType::kInfo,
-                      "HighsLpRelaxation::run HiPO has failed to get a valid "
-                      "basis: status = %s Try IPX\n",
-                      ipm.modelStatusToString(ipm.getModelStatus()).c_str());
-          ipm.setOptionValue("solver", kIpxString);
+        // If the IPM solver fails to get a basis, try the other one, unless
+        // it has stopped on the time limit or an interrupt: IPX can stall
+        // where HiPO succeeds, and vice versa. HiPO is tried after IPX only
+        // if mip_ipm_solver leaves the choice to HiGHS, HiPO is available,
+        // and IPX has not found the LP to be infeasible or unbounded
+        const HighsModelStatus ipm_status = ipm.getModelStatus();
+        const bool ipm_stopped = ipm_status == HighsModelStatus::kTimeLimit ||
+                                 ipm_status == HighsModelStatus::kInterrupt;
+        const bool ipx_conclusive =
+            ipm_status == HighsModelStatus::kInfeasible ||
+            ipm_status == HighsModelStatus::kUnbounded ||
+            ipm_status == HighsModelStatus::kUnboundedOrInfeasible;
+        const bool retry =
+            !ipm.getBasis().valid && !ipm_stopped &&
+            (use_hipo || (mip_ipm_solver == kHighsChooseString &&
+                          !ipx_conclusive &&
+                          HighsExternalApi::isAvailable<HighsExtras::hipo>()));
+        highsLogDev(mipsolver.options_mip_->log_options, HighsLogType::kInfo,
+                    "HighsLpRelaxation::run Simplex reached its iteration "
+                    "limit: %s has %s a valid basis after %d iterations and "
+                    "%.2fs: status = %s%s\n",
+                    use_hipo ? "HiPO" : "IPX",
+                    ipm.getBasis().valid ? "got" : "failed to get",
+                    int(ipm.getInfo().ipm_iteration_count), ipm.getRunTime(),
+                    ipm.modelStatusToString(ipm_status).c_str(),
+                    !retry     ? ""
+                    : use_hipo ? ": Try IPX"
+                               : ": Try HiPO");
+        if (retry) {
+          ipm.setOptionValue("solver", use_hipo ? kIpxString : kHipoString);
+          setIpmTimeLimit();
           mipsolver.profiling_->solveCall("LP4", mipsolver.submip);
           ipm.optimizeLp();
+          highsLogDev(mipsolver.options_mip_->log_options, HighsLogType::kInfo,
+                      "HighsLpRelaxation::run %s has %s a valid basis after "
+                      "%d iterations: status = %s; total IPM time %.2fs\n",
+                      use_hipo ? "IPX" : "HiPO",
+                      ipm.getBasis().valid ? "got" : "failed to get",
+                      int(ipm.getInfo().ipm_iteration_count),
+                      ipm.modelStatusToString(ipm.getModelStatus()).c_str(),
+                      ipm.getRunTime());
         }
         lpsolver.setBasis(ipm.getBasis(), "HighsLpRelaxation::run IPM basis");
         return run(false);
