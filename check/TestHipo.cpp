@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "HCheckConfig.h"
+#include "HConfig.h"
 #include "Highs.h"
 #include "HighsExternalApi.h"
 #include "catch.hpp"
