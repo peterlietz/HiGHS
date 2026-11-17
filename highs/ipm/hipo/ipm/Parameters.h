@@ -10,6 +10,12 @@ const Int kMaxIterDefault = 200;
 const double kIpmTolDefault = 1e-8;
 const Int kMaxBadIter = 5;
 const double kDivergeTol = 1e3;
+// Before stopping, HiGHS's KKT errors must be within tolerance, unless they
+// stop decreasing: a check counts as progress if it reduces the smallest
+// violation seen so far by this factor, and after this many checks without
+// progress a violation within the factor 100 allowed by HiGHS is accepted.
+const double kKktProgressFactor = 0.5;
+const Int kKktChecksWithoutProgress = 2;
 
 // parameters for correctors
 const double kGammaCorrector = 0.1;
