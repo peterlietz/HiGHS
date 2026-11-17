@@ -24,7 +24,8 @@ namespace hipo {
 // - assembleClique: to sum the contributions of a given child supernode into
 //                clique.
 // - denseFactorise: to perform the dense partial factorisation of frontal,
-//                storing the Schur complement in clique.
+//                storing the Schur complement in clique. reg_thresh holds the
+//                threshold for dynamic regularisation of each pivot.
 
 class FormatHandler {
  protected:
@@ -74,7 +75,7 @@ class FormatHandler {
   virtual void initClique() = 0;
   virtual void assembleFrontal(Int i, Int j, double val) = 0;
   virtual void assembleChild(Int child_sn, const double* child) = 0;
-  virtual Int denseFactorise(double reg_thresh) = 0;
+  virtual Int denseFactorise(const double* reg_thresh) = 0;
 
   // =================================================================
   // Virtual functions.

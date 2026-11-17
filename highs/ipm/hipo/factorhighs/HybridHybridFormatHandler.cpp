@@ -87,7 +87,7 @@ void HybridHybridFormatHandler::assembleFrontalMultiple(
   }
 }
 
-Int HybridHybridFormatHandler::denseFactorise(double reg_thresh) {
+Int HybridHybridFormatHandler::denseFactorise(const double* reg_thresh) {
   Int status;
 
   // either clique is valid, or clique is not needed

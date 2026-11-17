@@ -90,6 +90,10 @@ Int FactorHighsSolver::factorAS(const std::vector<double>& scaling) {
   // set static regularisation, since it may have changed
   FH_.setRegularisation(regul_.primal, regul_.dual);
 
+  // The augmented system is indefinite, so only the default dynamic
+  // regularisation applies.
+  FH_.setDynamicRegularisation(0.0);
+
   Clock clock;
   if (FH_.factorise(kkt_.S, kkt_.n(), kkt_.nz(), kkt_.rowsAS.data(),
                     kkt_.ptrAS.data(), kkt_.valAS.data()))
@@ -109,6 +113,15 @@ Int FactorHighsSolver::factorNE(const std::vector<double>& scaling) {
 
   // set static regularisation, since it may have changed
   FH_.setRegularisation(regul_.primal, regul_.dual);
+
+  // The normal equations A * Theta * A^T are positive definite. Close to
+  // optimality, Theta spans many orders of magnitude, and on degenerate LPs
+  // elimination can cancel a pivot down to rounding noise. Such a pivot, kept
+  // at the size of the static regularisation, gives a huge component of dy,
+  // which spoils dz of the variables at a bound and makes the steps collapse.
+  // So regularise pivots that are at the rounding level of their original
+  // diagonal entry.
+  FH_.setDynamicRegularisation(kDynamicDiagRelSpd);
 
   Clock clock;
   if (FH_.factorise(kkt_.S, kkt_.n(), kkt_.nz(), kkt_.rowsNE.data(),

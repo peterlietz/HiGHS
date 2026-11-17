@@ -11,7 +11,7 @@ namespace hipo {
 // Factorisation with "hybrid formats".
 
 Int denseFactFH(char format, Int n, Int k, double* A, double* B,
-                const Int* pivot_sign, double thresh, double* totalreg,
+                const Int* pivot_sign, const double* thresh, double* totalreg,
                 Int* swaps, double* pivot_2x2, DataCollector& data,
                 const FHoptions& options) {
   // ===========================================================================
@@ -95,9 +95,9 @@ Int denseFactFH(char format, Int n, Int k, double* A, double* B,
                                         &pivot_sign[j * nb] + jb);
     Int* swaps_current = &swaps[j * nb];
     double* pivot_2x2_current = &pivot_2x2[j * nb];
-    Int info = denseFactK('U', jb, D, jb, pivot_sign_current.data(), thresh,
-                          regul_current, swaps_current, pivot_2x2_current, data,
-                          options);
+    Int info = denseFactK('U', jb, D, jb, pivot_sign_current.data(),
+                          &thresh[j * nb], regul_current, swaps_current,
+                          pivot_2x2_current, data, options);
     if (info != 0) return info;
 
     if (options.pivoting) {

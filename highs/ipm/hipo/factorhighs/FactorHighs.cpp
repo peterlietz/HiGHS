@@ -24,6 +24,10 @@ void FHsolver::setRegularisation(double reg_p, double reg_d) {
   options_.reg_d = reg_d;
 }
 
+void FHsolver::setDynamicRegularisation(double rel) {
+  options_.dynamic_reg_rel = rel;
+}
+
 Int FHsolver::analyse(Symbolic& S, Int n, Int nz, const Int* rows,
                       const Int* ptr, const Int* signs, const Int* perm) {
   Analyse an_obj(n, nz, rows, ptr, signs, options_, logger_, data_, perm);

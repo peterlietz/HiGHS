@@ -39,21 +39,24 @@ static std::pair<Int, double> maxInCol(Int j, Int n, Int m, double* A,
   return {r, maxval};
 }
 
+static double staticRegPivot(double pivot, Int sign, const FHoptions& options) {
+  // value of the pivot after static regularisation
+
+  if (sign == 0) sign = pivot > 0 ? 1 : -1;
+  return sign > 0 ? pivot + options.reg_p : pivot - options.reg_d;
+}
+
 static void staticReg(double& pivot, Int sign, const FHoptions& options,
                       double& totalreg) {
   // apply static regularisation
 
   double old_pivot = pivot;
-  if (sign == 0) sign = pivot > 0 ? 1 : -1;
-  if (sign > 0)
-    pivot += options.reg_p;
-  else
-    pivot -= options.reg_d;
+  pivot = staticRegPivot(pivot, sign, options);
   totalreg = pivot - old_pivot;
 }
 
 static bool blockBunchKaufman(const Int j, Int n, double* A, Int lda,
-                              Int* swaps, Int* sign, double thresh,
+                              Int* swaps, Int* sign, double* thresh,
                               const FHoptions& options, double* totalreg,
                               DataCollector& data) {
   // Perform Bunch-Kaufman pivoting within a block of the supernode (see Schenk,
@@ -61,7 +64,10 @@ static bool blockBunchKaufman(const Int j, Int n, double* A, Int lda,
   // It works only for upper triangular A.
   // Return true if 2x2 pivot should be used, false otherwise.
   // Swap of columns may be performed.
-  // Regularisation of pivot may be performed.
+  // Regularisation of pivot may be performed: static regularisation is added
+  // to every pivot, and totalreg records all the regularisation of a pivot.
+  // thresh holds the threshold for dynamic regularisation of each pivot of the
+  // block; it is swapped together with the columns.
 
   HIPO_CLOCK_CREATE;
 
@@ -81,16 +87,17 @@ static bool blockBunchKaufman(const Int j, Int n, double* A, Int lda,
 
   // put column with max pivot as first column
   swapCols('U', n, A, lda, j, ind_max_diag, swaps, sign, data);
+  std::swap(thresh[j], thresh[ind_max_diag]);
 
   // Max in column j of diagonal block
   auto res = maxInCol(j, n, j, A, lda);
   double gamma_j = res.second;
   const Int r = res.first;
   const Int sign_j = sign[j] != 0 ? sign[j] : (A[j + lda * j] > 0 ? 1 : -1);
-  double Ajj = sign_j > 0 ? A[j + lda * j] + options.reg_d
-                          : A[j + lda * j] - options.reg_p;
+  // pivot j after static regularisation, as staticReg would make it
+  double Ajj = staticRegPivot(A[j + lda * j], sign_j, options);
 
-  if (std::max(std::abs(Ajj), gamma_j) <= thresh || sign_j * Ajj < 0 ||
+  if (std::max(std::abs(Ajj), gamma_j) <= thresh[j] || sign_j * Ajj < 0 ||
       j == n - 1) {
     // Must accept current pivot
     double old_pivot = A[j + lda * j];
@@ -101,9 +108,9 @@ static bool blockBunchKaufman(const Int j, Int n, double* A, Int lda,
       // A[j + lda * j] = sign_j * thresh;
     }
 
-    if (std::max(std::abs(Ajj), gamma_j) < thresh) {
+    if (std::max(std::abs(Ajj), gamma_j) < thresh[j]) {
       // perturbe pivot
-      A[j + lda * j] = sign_j * thresh;
+      A[j + lda * j] = sign_j * thresh[j];
       data.countRegPiv();
     }
     totalreg[j] = A[j + lda * j] - old_pivot;
@@ -115,8 +122,7 @@ static bool blockBunchKaufman(const Int j, Int n, double* A, Int lda,
     res = maxInCol(j, n, r, A, lda);
     double gamma_r = res.second;
     const Int sign_r = sign[r] != 0 ? sign[r] : (A[r + lda * r] > 0 ? 1 : -1);
-    double Arr = sign_r > 0 ? A[r + lda * r] + options.reg_p
-                            : A[r + lda * r] - options.reg_d;
+    double Arr = staticRegPivot(A[r + lda * r], sign_r, options);
 
     if ((std::abs(Ajj) >= kAlphaBK * gamma_j ||
          std::abs(Ajj) * gamma_r >= kAlphaBK * gamma_j * gamma_j)) {
@@ -129,6 +135,7 @@ static bool blockBunchKaufman(const Int j, Int n, double* A, Int lda,
       // Use pivot r
 
       swapCols('U', n, A, lda, j, r, swaps, sign, data);
+      std::swap(thresh[j], thresh[r]);
       staticReg(A[j + lda * j], sign_j, options, totalreg[j]);
 
       if (sign_j * A[j + lda * j] < 0) data.setWrongSign(A[j + lda * j]);
@@ -140,6 +147,7 @@ static bool blockBunchKaufman(const Int j, Int n, double* A, Int lda,
                                ? sign[j + 1]
                                : (A[j + 1 + lda * (j + 1)] > 0 ? 1 : -1);
       swapCols('U', n, A, lda, j + 1, r, swaps, sign, data);
+      std::swap(thresh[j + 1], thresh[r]);
       flag_2x2 = true;
       staticReg(A[j + lda * j], sign_j, options, totalreg[j]);
       staticReg(A[j + 1 + lda * (j + 1)], sign_jp1, options, totalreg[j + 1]);
@@ -155,8 +163,9 @@ static bool blockBunchKaufman(const Int j, Int n, double* A, Int lda,
 }
 
 Int denseFactK(char uplo, Int n, double* A, Int lda, Int* pivot_sign,
-               double thresh, double* totalreg, Int* swaps, double* pivot_2x2,
-               DataCollector& data, const FHoptions& options) {
+               const double* thresh, double* totalreg, Int* swaps,
+               double* pivot_2x2, DataCollector& data,
+               const FHoptions& options) {
   // ===========================================================================
   // Factorisation kernel
   // Matrix A is in format F
@@ -179,6 +188,9 @@ Int denseFactK(char uplo, Int n, double* A, Int lda, Int* pivot_sign,
     // initialise order of pivots
     for (Int i = 0; i < n; ++i) swaps[i] = i;
 
+    // thresholds for dynamic regularisation, swapped with the pivots
+    std::vector<double> pivot_thresh(thresh, thresh + n);
+
     // allocate space for copy of col(s)
     std::vector<double> temp(n - 1);
     std::vector<double> temp2(n - 1);
@@ -189,8 +201,9 @@ Int denseFactK(char uplo, Int n, double* A, Int lda, Int* pivot_sign,
       bool flag_2x2 = false;
 
       if (options.pivoting) {
-        flag_2x2 = blockBunchKaufman(j, n, A, lda, swaps, pivot_sign, thresh,
-                                     options, totalreg, data);
+        flag_2x2 =
+            blockBunchKaufman(j, n, A, lda, swaps, pivot_sign,
+                              pivot_thresh.data(), options, totalreg, data);
       }
 
       // cannot do 2x2 pivoting on last column
@@ -200,13 +213,11 @@ Int denseFactK(char uplo, Int n, double* A, Int lda, Int* pivot_sign,
         // 1x1 pivots
         step = 1;
 
-        // diagonal element
+        // diagonal element; with pivoting, blockBunchKaufman has already
+        // regularised it and recorded the regularisation in totalreg[j]
         double Ajj = A[j + lda * j];
 
         if (std::isnan(Ajj)) return kRetInvalidPivot;
-
-        // add regularisation
-        staticReg(Ajj, pivot_sign[j], options, totalreg[j]);
 
         if (!options.pivoting) {
           // add static regularisation

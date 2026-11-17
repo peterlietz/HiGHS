@@ -9,6 +9,9 @@ namespace hipo {
 struct FHoptions {
   double reg_p = 0.0;
   double reg_d = 0.0;
+  // If positive, dynamic regularisation also applies to a pivot that is below
+  // dynamic_reg_rel times the diagonal entry of the original matrix.
+  double dynamic_reg_rel = 0.0;
   Int nb = kBlockSize;
   bool pivoting = true;
   bool one_indexing = false;
