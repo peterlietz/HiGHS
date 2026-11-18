@@ -1,6 +1,10 @@
 #include "UpLookingSolver.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include "ipm/hipo/auxiliary/Auxiliary.h"
+#include "ipm/hipo/factorhighs/FactorHighsSettings.h"
 
 namespace hipo {
 
@@ -146,6 +150,7 @@ Int UpLookingSolver::factor(const std::vector<Int>& ptr,
     x[row] = 0.0;
     for (Int el = ptr[row]; el < ptr[row + 1]; ++el) x[rows[el]] = val[el];
     double d = x[row];
+    const double diag = d;  // the original diagonal entry
     x[row] = 0.0;
 
     for (Int i = 0; i < rowcount; ++i) {
@@ -175,8 +180,18 @@ Int UpLookingSolver::factor(const std::vector<Int>& ptr,
     else
       d -= regul_.primal;
 
-    if (d * signs_[row] < reg_threshold_) {
-      d = reg_value_ * signs_[row];
+    // For the normal equations (positive definite), a pivot is also
+    // regularised when elimination has cancelled it far below its original
+    // diagonal entry, as in FactorHighs (kDynamicDiagRelSpd): near the optimum
+    // of a primal degenerate LP, A*Theta*A^T is numerically singular and such
+    // pivots are rounding noise, well above the absolute threshold when the
+    // diagonal is large. Dividing by them makes the factor, and the direction,
+    // blow up.
+    const double threshold =
+        kkt_.isAS() ? reg_threshold_
+                    : std::max(reg_threshold_, kDynamicDiagRelSpd * std::abs(diag));
+    if (d * signs_[row] < threshold) {
+      d = std::max(reg_value_, threshold) * signs_[row];
     }
 
     regularisation_[row] = d - old_pivot;
