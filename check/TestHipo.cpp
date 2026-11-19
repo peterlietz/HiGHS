@@ -127,6 +127,176 @@ TEST_CASE("test-hipo-infeas", "[highs_hipo]") {
   highs.resetThreadScheduler(true);
 }
 
+TEST_CASE("test-hipo-feasible-zero-objective", "[highs_hipo]") {
+  // Feasible LPs with c = 0 that HiPO used to declare primal infeasible,
+  // because a dual objective above 1 passed its objective-based test
+  auto solve = [](const HighsLp& lp) {
+    Highs highs;
+    highs.setOptionValue("output_flag", dev_run);
+    highs.setOptionValue("solver", kHipoString);
+    highs.setOptionValue("presolve", kHighsOffString);
+    highs.setOptionValue("run_crossover", kHighsOffString);
+    REQUIRE(highs.passModel(lp) == HighsStatus::kOk);
+    highs.run();
+    REQUIRE(highs.getModelStatus() == HighsModelStatus::kOptimal);
+    highs.resetThreadScheduler(true);
+  };
+
+  // The primal iterate is feasible when the dual objective passes 1
+  HighsLp lp;
+  lp.num_col_ = 11;
+  lp.num_row_ = 7;
+  lp.col_cost_.assign(lp.num_col_, 0);
+  lp.col_lower_ = {0, 0,          0,          0, 0,         -kHighsInf,
+                   0, -kHighsInf, -kHighsInf, 0, -kHighsInf};
+  lp.col_upper_.assign(lp.num_col_, kHighsInf);
+  lp.col_upper_[2] = 7372;
+  lp.row_lower_ = {3997, -24509, 41320, -1173, -14705, 29738, -211};
+  lp.row_upper_ = {kHighsInf, -24509, 41320,    kHighsInf,
+                   kHighsInf, 29738,  kHighsInf};
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0, 1, 3, 6, 8, 10, 11, 13, 15, 18, 20, 21};
+  lp.a_matrix_.index_ = {3, 0, 6, 1, 5, 6, 0, 2, 1, 5, 1,
+                         2, 3, 4, 6, 2, 4, 6, 4, 6, 1};
+  lp.a_matrix_.value_ = {-4, -5, 6,  -4, 8, -7, 6, 4, 1,  1, 5,
+                         -3, 9,  -9, -4, 5, -4, 1, 7, -5, -8};
+  solve(lp);
+
+  // min 0 s.t. 3x >= 1961713, 3x >= -341609, x free: infeasible only within
+  // HiPO's artificial bounds on the free variable
+  lp = HighsLp();
+  lp.num_col_ = 1;
+  lp.num_row_ = 2;
+  lp.col_cost_ = {0};
+  lp.col_lower_ = {-kHighsInf};
+  lp.col_upper_ = {kHighsInf};
+  lp.row_lower_ = {1961713, -341609};
+  lp.row_upper_ = {kHighsInf, kHighsInf};
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0, 2};
+  lp.a_matrix_.index_ = {0, 1};
+  lp.a_matrix_.value_ = {3, 3};
+  solve(lp);
+
+  // Feasible QPs with c = 0 (random rows, large right-hand sides, some free
+  // columns, and a column 0 <= w <= 1 with Q_ww = 1 and no rows) that HiPO
+  // declared primal infeasible: the certificate test applies to QPs too
+  auto solveQp = [](HighsLp lp) {
+    const HighsInt w = lp.num_col_++;
+    lp.col_cost_.assign(lp.num_col_, 0);
+    lp.col_lower_.push_back(0);
+    lp.col_upper_.push_back(1);
+    lp.row_upper_.assign(lp.num_row_, kHighsInf);
+    lp.a_matrix_.format_ = MatrixFormat::kColwise;
+    lp.a_matrix_.start_.push_back(lp.a_matrix_.start_.back());
+    HighsModel model;
+    model.lp_ = lp;
+    model.hessian_.dim_ = lp.num_col_;
+    model.hessian_.format_ = HessianFormat::kTriangular;
+    model.hessian_.start_.assign(lp.num_col_ + 1, 0);
+    model.hessian_.start_[lp.num_col_] = 1;
+    model.hessian_.index_ = {w};
+    model.hessian_.value_ = {1};
+    Highs highs;
+    highs.setOptionValue("output_flag", dev_run);
+    highs.setOptionValue("solver", kHipoString);
+    highs.setOptionValue("presolve", kHighsOffString);
+    highs.setOptionValue("run_crossover", kHighsOffString);
+    REQUIRE(highs.passModel(model) == HighsStatus::kOk);
+    highs.run();
+    REQUIRE(highs.getModelStatus() == HighsModelStatus::kOptimal);
+    highs.resetThreadScheduler(true);
+  };
+  const double inf = kHighsInf;
+  lp = HighsLp();
+  lp.num_col_ = 12;
+  lp.num_row_ = 8;
+  lp.row_lower_ = {3696052, -1316217, -8115407, 3747910,
+                   1339586, 4481191,  4008801,  627961};
+  lp.col_lower_ = {0, 0, 0, 0, 0, 0, 0, -inf, -inf, 0, 0, 0};
+  lp.col_upper_ = {inf, inf, inf, 438747, inf, inf,
+                   inf, inf, inf, inf,    inf, inf};
+  lp.a_matrix_.start_ = {0, 2, 3, 6, 7, 7, 13, 15, 17, 19, 22, 24, 26};
+  lp.a_matrix_.index_ = {1, 2, 0, 2, 5, 6, 3, 0, 1, 2, 3, 5, 6,
+                         3, 4, 2, 7, 5, 6, 3, 4, 7, 2, 3, 2, 3};
+  lp.a_matrix_.value_ = {7, -5, 1, -3, 1,  6, 1,  4, -7, 1,  9,  6, 3,
+                         9, -9, 1, 8,  -8, 1, -3, 5, -3, -6, -1, 2, -3};
+  solveQp(lp);
+
+  lp = HighsLp();
+  lp.num_col_ = 12;
+  lp.num_row_ = 8;
+  lp.row_lower_ = {-658690,  -1937588, -1304117, -1033898,
+                   -8072220, 5707108,  -3619694, -9796327};
+  lp.col_lower_ = {0, -inf, 0, -inf, 0, 0, -inf, -inf, 0, 0, -inf, 0};
+  lp.col_upper_.assign(lp.num_col_, inf);
+  lp.a_matrix_.start_ = {0, 3, 7, 8, 10, 13, 14, 18, 20, 21, 21, 25, 26};
+  lp.a_matrix_.index_ = {0, 1, 4, 0, 2, 5, 7, 7, 2, 3, 1, 6, 7,
+                         4, 2, 3, 4, 5, 3, 7, 7, 1, 5, 6, 7, 4};
+  lp.a_matrix_.value_ = {-3, -9, -9, 5,  -8, -2, 5,  -7, -9, 4, 4,  -2, -9,
+                         -3, 8,  1,  -5, -9, -5, -9, -5, -9, 9, -8, -7, -7};
+  solveQp(lp);
+}
+
+TEST_CASE("test-hipo-infeasibility-certificate", "[highs_hipo]") {
+  // The certificates that HiPO requires before it declares infeasibility
+  // must reject an iterate whose objective or residuals overflow
+  //
+  // min -x1 - x2  s.t.  x1 - x2 = 1,  x1 - x2 + x3 = 1,  x >= 0
+  // is unbounded, with ray (1, 1, 0).
+  HighsLp lp;
+  lp.num_col_ = 3;
+  lp.num_row_ = 2;
+  lp.col_cost_ = {-1, -1, 0};
+  lp.col_lower_ = {0, 0, 0};
+  lp.col_upper_ = {kHighsInf, kHighsInf, kHighsInf};
+  lp.row_lower_ = {1, 1};
+  lp.row_upper_ = {1, 1};
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0, 2, 4, 5};
+  lp.a_matrix_.index_ = {0, 1, 0, 1, 1};
+  lp.a_matrix_.value_ = {1, 1, -1, -1, 1};
+
+  hipo::Model model;
+  REQUIRE(model.init(lp, HighsHessian()) == 0);
+  REQUIRE(model.n() == 3);
+  REQUIRE(model.m() == 2);
+  hipo::Info info;
+  hipo::Regularisation regul;
+  hipo::Iterate it(model, info, regul);
+  const double scale_x = model.colScale(0);
+  REQUIRE(model.colScale(1) == scale_x);
+
+  // A scaled ray is a certificate of dual infeasibility, not of primal
+  // infeasibility
+  it.x = {1e6 / scale_x, 1e6 / scale_x, 0};
+  it.y = {0, 0};
+  it.zl = {1, 1, 1};
+  it.zu = {0, 0, 0};
+  REQUIRE(it.dualInfeasCertificate() >= hipo::kInfeasCertificateTol);
+  REQUIRE(it.primalInfeasCertificate() == 0);
+
+  // Near the largest double, c^T x overflows to -inf: no certificate
+  auto dot = [](const std::vector<double>& u, const std::vector<double>& v) {
+    double s = 0;
+    for (size_t i = 0; i < u.size(); ++i) s += u[i] * v[i];
+    return s;
+  };
+  it.x = {1e308, 1e308, 1e308};
+  REQUIRE(std::isinf(dot(it.x, model.c())));
+  REQUIRE(it.dualInfeasCertificate() == 0);
+  it.x = {kHighsInf, kHighsInf, 0};
+  REQUIRE(it.dualInfeasCertificate() == 0);
+
+  // b^T y overflows while A^T y + z is not zero: no certificate
+  it.x = {1, 1, 1};
+  it.y = {1e308, 1e308};
+  REQUIRE(std::isinf(dot(it.y, model.b())));
+  REQUIRE(it.primalInfeasCertificate() == 0);
+  it.y = {kHighsInf, 0};
+  REQUIRE(it.primalInfeasCertificate() == 0);
+}
+
 TEST_CASE("test-hipo-freevar", "[highs_hipo]") {
   const HighsModelStatus expected_status = HighsModelStatus::kOptimal;
   Highs highs;

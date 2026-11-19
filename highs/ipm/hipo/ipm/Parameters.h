@@ -21,6 +21,11 @@ const double kDivergeTol = 1e3;
 const double kKktProgressFactor = 0.5;
 const Int kKktChecksWithoutProgress = 2;
 
+// An iterate is only accepted as evidence of infeasibility if it rules out
+// feasible points of up to this many times its own magnitude; see
+// Iterate::primalInfeasCertificate and Iterate::dualInfeasCertificate.
+const double kInfeasCertificateTol = 10.0;
+
 // parameters for correctors
 const double kGammaCorrector = 0.1;
 const double kSigmaAffine = 0.01;
