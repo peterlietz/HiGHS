@@ -27,7 +27,8 @@ HighsStatus solveLpIpx(const HighsOptions& options, HighsTimer& timer,
                        const HighsLp& lp, HighsBasis& highs_basis,
                        HighsSolution& highs_solution,
                        HighsModelStatus& model_status, HighsInfo& highs_info,
-                       HighsCallback& callback);
+                       HighsCallback& callback,
+                       const double reference_objective_offset = kHighsInf);
 
 HighsStatus solveLpHipo(HighsLpSolverObject& solver_object);
 

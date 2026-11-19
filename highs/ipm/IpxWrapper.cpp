@@ -24,14 +24,16 @@ HighsStatus solveLpIpx(HighsLpSolverObject& solver_object) {
   return solveLpIpx(solver_object.options_, solver_object.timer_,
                     solver_object.lp_, solver_object.basis_,
                     solver_object.solution_, solver_object.model_status_,
-                    solver_object.highs_info_, solver_object.callback_);
+                    solver_object.highs_info_, solver_object.callback_,
+                    solver_object.reference_objective_offset_);
 }
 
 HighsStatus solveLpIpx(const HighsOptions& options, HighsTimer& timer,
                        const HighsLp& lp, HighsBasis& highs_basis,
                        HighsSolution& highs_solution,
                        HighsModelStatus& model_status, HighsInfo& highs_info,
-                       HighsCallback& callback) {
+                       HighsCallback& callback,
+                       const double reference_objective_offset) {
   // Use IPX to try to solve the LP
   //
   // Can return HighsModelStatus (HighsStatus) values:
@@ -174,6 +176,17 @@ HighsStatus solveLpIpx(const HighsOptions& options, HighsTimer& timer,
   std::vector<char> constraint_type;
   fillInIpxData(lp, num_col, num_row, offset, objective, col_lb, col_ub, Ap, Ai,
                 Av, rhs, constraint_type);
+  // HiGHS's final check normalises the P-D objective error by the
+  // objectives of the incumbent model without its offset, which is not the
+  // offset of lp if lp is a presolved LP. The solver normalises its gap by
+  // the objectives of the LP it is given, with its offset, so give it the
+  // offset less that of the incumbent model: its gap test then uses HiGHS's
+  // measure, and the offset of the incumbent model, which may dominate the
+  // objective, is not part of the objectives whose difference is the gap.
+  // The objective values in the solver's log are then without it.
+  // IPX's objective is in the sense of minimisation (fillInIpxData)
+  if (std::isfinite(reference_objective_offset))
+    offset -= HighsInt(lp.sense_) * reference_objective_offset;
   highsLogUser(options.log_options, HighsLogType::kInfo,
                "IPX model has %" HIGHSINT_FORMAT " rows, %" HIGHSINT_FORMAT
                " columns and %" HIGHSINT_FORMAT " nonzeros\n",
