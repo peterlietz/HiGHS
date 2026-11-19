@@ -9,6 +9,10 @@ namespace hipo {
 const Int kMaxIterDefault = 200;
 const double kIpmTolDefault = 1e-8;
 const Int kMaxBadIter = 5;
+// a step of at least kGapStallStep must reduce the gap of a feasible iterate
+// by a factor kGapStallReduction, else it counts towards stagnation
+const double kGapStallStep = 0.9;
+const double kGapStallReduction = 0.9;
 const double kDivergeTol = 1e3;
 
 // parameters for correctors

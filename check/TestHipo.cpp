@@ -212,6 +212,38 @@ TEST_CASE("test-hipo-large-free-vars", "[highs_hipo]") {
   highs.resetThreadScheduler(true);
 }
 
+TEST_CASE("test-hipo-zero-cost-dependent-rows", "[highs_hipo]") {
+  // min 0 s.t. -x0 - 2x1 + 4x2 >= -1201505, x0 + 2x1 - 4x2 = 1201505,
+  // x0 >= 0, x1, x2 free. The rows are dependent, so y can grow along the
+  // ray y0 = y1 of the optimal dual face, and the rounding errors in b'y
+  // keep the gap above the tolerance while mu goes to zero. With the
+  // artificial bounds of x1, x2 moved to +-10|x|, HiPO took 294 iterations to
+  // stop, and IPX then dropped all barrier terms and iterated without end,
+  // as a zero complementarity gap that stays zero did not count as a stall.
+  HighsLp lp;
+  lp.num_col_ = 3;
+  lp.num_row_ = 2;
+  lp.col_cost_ = {0, 0, 0};
+  lp.col_lower_ = {0, -kHighsInf, -kHighsInf};
+  lp.col_upper_ = {kHighsInf, kHighsInf, kHighsInf};
+  lp.row_lower_ = {-1201505, 1201505};
+  lp.row_upper_ = {kHighsInf, 1201505};
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0, 2, 4, 6};
+  lp.a_matrix_.index_ = {0, 1, 0, 1, 0, 1};
+  lp.a_matrix_.value_ = {-1, 1, -2, 2, 4, -4};
+  Highs highs;
+  highs.setOptionValue("output_flag", dev_run);
+  highs.setOptionValue("solver", kHipoString);
+  highs.setOptionValue("presolve", kHighsOffString);
+  highs.setOptionValue("time_limit", 10.0);
+  REQUIRE(highs.passModel(lp) == HighsStatus::kOk);
+  highs.run();
+  REQUIRE(highs.getModelStatus() == HighsModelStatus::kOptimal);
+  REQUIRE(highs.getInfo().ipm_iteration_count <= 60);
+  highs.resetThreadScheduler(true);
+}
+
 TEST_CASE("test-hipo-huge-finite-bound", "[highs_hipo]") {
   // min x0 + x1 + x2 s.t. x0 + x1 + x2 >= 1, 0 <= x0 <= 1e200, x1 free,
   // x2 >= 0, with infinite_bound = inf so that 1e200 is a finite bound. The
