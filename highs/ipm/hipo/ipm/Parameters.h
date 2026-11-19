@@ -72,6 +72,7 @@ const double kScalingSmallBoundDiff = 1e-3;
 // parameters for free variables
 const double kFreeVarsInitialBound = 1e4;
 const double kFreeVarsCloseRatio = 0.5;
+const double kFreeVarsMoveFactor = 10.0;
 
 // parameters for parallel NE
 const Int kParallelNEStructTasks = 50;   // 32 < . <= 64
