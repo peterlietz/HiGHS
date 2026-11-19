@@ -61,6 +61,12 @@ const double kMemoryMarginParallelTree = 2.5;
 // available memory costs about 30us of file reads on Linux
 const double kMemoryCheckMinBytes = 256.0 * 1024 * 1024;
 
+// parameters for leaving a network LP to IPX: the factorisation is predicted to
+// need more than this many flops per nonzero of A, and more than this many
+// flops in total
+const double kIpxPreferredFlopsPerNz = 1e5;
+const double kIpxPreferredFlopsMin = 1e9;
+
 // parameters for iterative refinement
 const Int kRefineMaxIter = 3;
 const double kRefineTol = 1e-12;

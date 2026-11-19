@@ -327,6 +327,7 @@ class Solver {
 
   isFailure initialiseLinearSolver();
   isSuccess switchToMultifrontal();
+  bool ipxPreferred(FactorHighsSolver& factor_highs);
 
   void chooseAllowedParallelism(const HighsOptions& highs_options);
 };

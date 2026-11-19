@@ -963,6 +963,8 @@ bool useHipo(const HighsOptions& options,
     use_hipo = HighsExternalApi::isAvailable<HighsExtras::hipo>();
   }
   if (options.run_centring) use_hipo = false;
+  // With solver = "ipm", HiPO itself leaves a network LP to IPX if its
+  // analyse phase predicts a nearly dense factor (hipo::Solver::ipxPreferred).
   // Later decide between HiPO and IPX based on LP properties
   if (specific_solver_option == kMipIpmSolverString) return use_hipo;
   // Later decide between simplex, HiPO and IPX based on LP properties

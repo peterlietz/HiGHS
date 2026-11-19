@@ -58,6 +58,11 @@ class FactorHighsSolver : public LinearSolver {
               std::vector<double>& lhs_y) override;
   Int setup() override;
   void checkMemory() const override;
+
+  // Flops of factorising the normal equations with an AMD ordering, as
+  // predicted by their analyse phase, or -1 if it fails. Much cheaper than
+  // setup(), which also analyses the augmented system and runs Metis.
+  double flopsNormalEquationsAmd();
   void clear() override;
   double flops() const override;
   double spops() const override;

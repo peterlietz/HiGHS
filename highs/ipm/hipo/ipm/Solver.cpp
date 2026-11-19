@@ -97,6 +97,9 @@ void Solver::setOptions(const HighsOptions& highs_options) {
   options_.factor = highs_options.hipo_factor;
   options_.block_size = highs_options.hipo_block_size;
   options_.random_seed = highs_options.random_seed + 42;
+  // With solver = "ipm", the choice between HiPO and IPX is left to HiGHS;
+  // with solver = "hipo", HiPO is run whatever it costs
+  options_.allow_ipx_instead = highs_options.solver == kIpmString;
   chooseAllowedParallelism(highs_options);
 
   options_orig_ = options_;
@@ -141,6 +144,8 @@ void Solver::reset() {
 void Solver::solve() {
   doSolve();
   info_.ipm_iter = iter_;
+  // Nothing has been solved, and the caller runs IPX
+  if (info_.ipx_preferred) return;
   finaliseStatus();
   printSummary();
 }
@@ -172,6 +177,7 @@ void Solver::doSolve() {
   runIpm();
   // A factorisation stopped by the time limit is reported by finaliseStatus
   if (errorOrInterrupt()) return;
+  if (info_.ipx_preferred) return;
 
   runIpx();
   if (errorOrInterrupt()) return;
@@ -1270,12 +1276,21 @@ void Solver::resetToBestIter(Int iter, bool print) {
 }
 
 isFailure Solver::initialiseLinearSolver() {
-  LS_.reset(new FactorHighsSolver(*kkt_, options_, model_, regul_, info_,
-                                  it_->data, logger_, control_));
+  FactorHighsSolver* factor_highs = new FactorHighsSolver(
+      *kkt_, options_, model_, regul_, info_, it_->data, logger_, control_);
+  LS_.reset(factor_highs);
   if (!LS_) {
     info_.error = kErrorFailedAllocation;
     return true;
   }
+
+  // Decide before the full analyse phase, which can take far longer than
+  // IPX needs to solve the LP
+  if (ipxPreferred(*factor_highs)) {
+    info_.ipx_preferred = true;
+    return true;
+  }
+
   info_.error = LS_->setup();
   if (info_.error) return true;
 
@@ -1315,6 +1330,45 @@ isFailure Solver::initialiseLinearSolver() {
   }
 
   return false;
+}
+
+bool Solver::ipxPreferred(FactorHighsSolver& factor_highs) {
+  // If every column of A has at most two nonzeros, every basis matrix is,
+  // after permutation, block triangular with diagonal blocks that are either
+  // single entries or one cycle each (its graph, with rows as nodes and
+  // columns as edges, is a pseudoforest). For a network matrix the bases are
+  // triangular; for, say, a 2-matching or a gain network, each component of
+  // a basis can contain one cycle. Either way, IPX's LU factors of the basis
+  // preconditioner stay about as sparse as the basis. The Cholesky factor of
+  // A * D * A^T, however, can be nearly dense (as for graphs without small
+  // separators). If a cheap analyse phase (normal equations, AMD only)
+  // predicts that one factorisation costs far more than a CG iteration of
+  // IPX, which is O(nnz(A)), leave the LP to IPX. For other matrices the
+  // cost of IPX can't be predicted, so HiPO is used.
+  if (!options_.allow_ipx_instead || model_.qp()) return false;
+
+  const HighsSparseMatrix& A = model_.A();
+  const double nz_A = std::max(1.0, (double)A.numNz());
+  const double flops_thresh =
+      std::max(kIpxPreferredFlopsMin, kIpxPreferredFlopsPerNz * nz_A);
+  // Even a dense factor of the normal equations needs fewer flops
+  const double m = A.num_row_;
+  if (m * m * m < flops_thresh) return false;
+  for (Int col = 0; col < A.num_col_; ++col)
+    if (A.start_[col + 1] - A.start_[col] > 2) return false;
+
+  Clock clock;
+  const double flops = factor_highs.flopsNormalEquationsAmd();
+  info_.times[kAnalyseTime] += clock.stop();
+  if (flops < flops_thresh) return false;
+
+  std::stringstream log_stream;
+  log_stream << "LP with at most two nonzeros per column whose factorisation "
+                "needs "
+             << sci(flops, 0, 1) << " flops (" << sci(flops / nz_A, 0, 1)
+             << " per nonzero of A): solving it with IPX instead\n";
+  logger_.print(log_stream.str().c_str());
+  return true;
 }
 
 isSuccess Solver::switchToMultifrontal() {
