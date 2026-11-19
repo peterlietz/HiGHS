@@ -117,6 +117,46 @@ TEST_CASE("test-hipo-qp", "[highs_hipo]") {
   highs.resetThreadScheduler(true);
 }
 
+TEST_CASE("test-hipo-qp-kkt", "[highs_hipo]") {
+  // min 1e6 y + y^2/2 + x^2/2 - 0.4 x  s.t.  y >= 1e5, 0 <= x <= 1
+  //
+  // The objective, 1.05e11, lets HiPO's relative gap test pass while x is
+  // still far from its bounds with a dual of 0.2, which the QP KKT check of
+  // HiGHS reports as a dual infeasibility. HiPO has to check that itself and
+  // continue, rather than return a solution that HiGHS rejects.
+  HighsModel model;
+  HighsLp& lp = model.lp_;
+  lp.num_col_ = 2;
+  lp.num_row_ = 1;
+  lp.col_cost_ = {1e6, -0.4};
+  lp.col_lower_ = {0, 0};
+  lp.col_upper_ = {kHighsInf, 1};
+  lp.row_lower_ = {1e5};
+  lp.row_upper_ = {kHighsInf};
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0, 1, 1};
+  lp.a_matrix_.index_ = {0};
+  lp.a_matrix_.value_ = {1};
+  HighsHessian& hessian = model.hessian_;
+  hessian.dim_ = 2;
+  hessian.format_ = HessianFormat::kTriangular;
+  hessian.start_ = {0, 1, 2};
+  hessian.index_ = {0, 1};
+  hessian.value_ = {1, 1};
+
+  Highs highs;
+  highs.setOptionValue("output_flag", dev_run);
+  highs.setOptionValue("solver", kHipoString);
+  REQUIRE(highs.passModel(model) == HighsStatus::kOk);
+  REQUIRE(highs.run() == HighsStatus::kOk);
+  REQUIRE(highs.getModelStatus() == HighsModelStatus::kOptimal);
+  REQUIRE(highs.getInfo().num_dual_infeasibilities == 0);
+  const double expected_obj = 1e11 + 0.5e10 - 0.08;
+  REQUIRE(std::abs(highs.getObjectiveValue() - expected_obj) <
+          1e-9 * expected_obj);
+  highs.resetThreadScheduler(true);
+}
+
 TEST_CASE("test-hipo-infeas", "[highs_hipo]") {
   const HighsModelStatus expected_status = HighsModelStatus::kInfeasible;
   Highs highs;
