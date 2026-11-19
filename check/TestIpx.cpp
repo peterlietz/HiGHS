@@ -136,3 +136,62 @@ TEST_CASE("ipx-no-progress-crossover", "[highs_ipx]") {
   REQUIRE(std::fabs(h.getInfo().objective_function_value - lp.offset_) < 1e-9);
   h.resetThreadScheduler(true);
 }
+
+TEST_CASE("ipx-fixed-column-gap", "[highs_ipx]") {
+  // A balanced transportation LP whose objective constant -147155 (optimal
+  // c'x) is the cost of a column fixed at 1, so that the optimum is 0.
+  // - Presolve off: IPX removes the fixed column itself and used to
+  //   normalise its gap by the objective of the LP without it (about 1.5e5),
+  //   so it stopped with HiGHS's P-D objective error at 5.1e-5: Unknown
+  // - Presolve on, IPX dualizing the presolved LP: its objective without the
+  //   offset is that of the LP negated, so the gap was normalised by about
+  //   twice the offset, and IPX stopped at 14 times the tolerance
+  const std::vector<double> supply = {7267, 14623, 6263};
+  const std::vector<double> demand = {7615, 5870, 6327, 8341};
+  HighsLp lp;
+  lp.num_col_ = 13;
+  lp.num_row_ = 7;
+  lp.col_cost_ = {9, 4, 7, 1, 8, 8, 8, 7, 8, 4, 7, 2, -147155};
+  lp.col_lower_.assign(lp.num_col_, 0);
+  lp.col_upper_.assign(lp.num_col_, kHighsInf);
+  lp.col_lower_[12] = 1;
+  lp.col_upper_[12] = 1;
+  lp.row_lower_ = supply;
+  lp.row_lower_.insert(lp.row_lower_.end(), demand.begin(), demand.end());
+  lp.row_upper_ = lp.row_lower_;
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0};
+  for (HighsInt i = 0; i < 3; ++i) {
+    for (HighsInt j = 0; j < 4; ++j) {
+      lp.a_matrix_.index_.push_back(i);
+      lp.a_matrix_.index_.push_back(3 + j);
+      lp.a_matrix_.value_.push_back(1);
+      lp.a_matrix_.value_.push_back(1);
+      lp.a_matrix_.start_.push_back(lp.a_matrix_.index_.size());
+    }
+  }
+  lp.a_matrix_.start_.push_back(lp.a_matrix_.index_.size());
+
+  struct Run {
+    std::string presolve;
+    HighsInt dualize;
+  };
+  for (const Run& run : {Run{kHighsOffString, kIpxDualizeStrategyOff},
+                         Run{kHighsOnString, kIpxDualizeStrategyOn}}) {
+    const HighsInt dualize = run.dualize;
+    Highs h;
+    h.setOptionValue("output_flag", dev_run);
+    h.setOptionValue("solver", kIpxString);
+    h.setOptionValue("presolve", run.presolve);
+    h.setOptionValue("run_crossover", kHighsOffString);
+    h.setOptionValue("ipx_dualize_strategy", dualize);
+    REQUIRE(h.passModel(lp) == HighsStatus::kOk);
+    h.run();
+    REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
+    double optimality_tolerance;
+    h.getOptionValue("optimality_tolerance", optimality_tolerance);
+    REQUIRE(h.getInfo().primal_dual_objective_error <= optimality_tolerance);
+    REQUIRE(std::fabs(h.getInfo().objective_function_value) < 1e-3);
+    h.resetThreadScheduler(true);
+  }
+}
