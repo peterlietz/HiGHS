@@ -66,3 +66,4 @@ have no test here:
 | #3700 highspy writes the log header to stdout at the first `Highs()` | #3697, #3704 (once per process is intended) | |
 | #3710 `Highs::crossover` segfaults before any `run()` | #3731 | `issue-3710` in `check/TestCrossover.cpp` |
 | #3715 HiPO stops on an offset-free P-D gap (offset in the model) | #3744 | `issue-3715` in `check/TestLpSolvers.cpp`; here `issue-3715-hipo-model-offset`. Offsets created by presolve still fail: `issue-3715-hipo-presolve-offset` |
+| #3749 HiPO mishandles the objective sense on maximisation QPs | #3752 (same fix as our `fixes/hipo-maxqp-offdiag`, since dropped) | `issue-3749` in `check/TestHipo.cpp`; here `weakness-hipo-maxqp-offdiag-cycles`, `-offdiag-fixed-column`, `-fixed-column-dual` |
