@@ -349,7 +349,8 @@ void Model::print(const Logger& logger) const {
   logger.print(log_stream.str().c_str());
 }
 
-Int Model::loadIntoIpx(ipx::LpSolver& lps) const {
+Int Model::loadIntoIpx(ipx::LpSolver& lps,
+                         double reference_objective_offset) const {
   Int ipx_m, ipx_n;
   std::vector<double> ipx_b, ipx_c, ipx_lower, ipx_upper, ipx_A_vals;
   std::vector<Int> ipx_A_ptr, ipx_A_rows;
@@ -361,6 +362,9 @@ Int Model::loadIntoIpx(ipx::LpSolver& lps) const {
   fillInIpxData(*lp_orig_, ipx_n, ipx_m, ipx_offset, ipx_c, ipx_lower,
                 ipx_upper, ipx_A_ptr, ipx_A_rows, ipx_A_vals, ipx_b,
                 ipx_constraints);
+  // As in solveLpIpx: judge IPX's gap as HiGHS's final check will
+  if (std::isfinite(reference_objective_offset))
+    ipx_offset -= HighsInt(lp_orig_->sense_) * reference_objective_offset;
 
   Int load_status = lps.LoadModel(
       ipx_n, ipx_offset, ipx_c.data(), ipx_lower.data(), ipx_upper.data(),

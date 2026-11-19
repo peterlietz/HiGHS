@@ -132,7 +132,9 @@ class Model {
   Int64 nzNEub() const { return NE_nz_ub_; }
   const std::vector<Int>& freeVars() const { return free_variables_; }
 
-  Int loadIntoIpx(ipx::LpSolver& lps) const;
+  // reference_objective_offset: see solveLpIpx (kHighsInf: none)
+  Int loadIntoIpx(ipx::LpSolver& lps,
+                  double reference_objective_offset = kHighsInf) const;
 
   // classes for preprocessing
   friend struct PreprocessEmptyRows;

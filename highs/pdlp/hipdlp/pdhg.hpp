@@ -46,6 +46,12 @@ class PDLPSolver {
   // --- setup & Main Interface ---
   HighsStatus setup(const HighsOptions& options, HighsTimer& timer);
   void passLp(const HighsLp* lp) { original_lp_ = lp; }
+  // The objective value (in the sense of the LP passed) to leave out of the
+  // offset of the LP that PDHG solves, so that its gap is judged as HiGHS's
+  // final check judges it (0: none). The final objective is unchanged
+  void setObjectiveReference(const double reference) {
+    objective_reference_ = reference;
+  }
   void preprocessLp();
   void scaleProblem();
 
@@ -174,6 +180,7 @@ class PDLPSolver {
   HighsInt original_num_col_ = 0;
   HighsInt num_eq_rows_ = 0;
   HighsInt sense_origin_ = 1;
+  double objective_reference_ = 0.0;
   double unscaled_rhs_norm_ = 0.0;
   double unscaled_c_norm_ = 0.0;
   std::vector<HighsBool> is_equality_row_;

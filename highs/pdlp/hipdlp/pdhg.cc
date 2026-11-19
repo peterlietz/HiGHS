@@ -166,7 +166,7 @@ void PDLPSolver::preprocessLp() {
   HighsInt nEqs = 0;
   HighsInt num_free_rows = 0;
   sense_origin_ = (original_lp_->sense_ == ObjSense::kMinimize) ? 1 : -1;
-  lp_.offset_ = original_lp_->offset_ * sense_origin_;
+  lp_.offset_ = (original_lp_->offset_ - objective_reference_) * sense_origin_;
   constraint_types_.resize(nRows_orig);
 
   // 1. First pass: Classify constraints and count slack variables needed
