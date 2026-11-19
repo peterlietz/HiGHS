@@ -236,7 +236,11 @@ shouldTerminate Solver::prepareIter() {
 
   ++iter_;
 
-  model_.adjustFreeVars(it_->x, it_->xl, it_->xu, logger_);
+  if (model_.adjustFreeVars(it_->x, it_->xl, it_->xu, logger_)) {
+    // the bound residuals and mu of the moved bounds have changed
+    it_->residual1234();
+    it_->computeMu();
+  }
 
   it_->clearDir();
 
@@ -1010,6 +1014,14 @@ isFailure Solver::centralityCorrectors() {
   Int cor;
   for (cor = 0; cor < info_.correctors; ++cor) {
     residualsMcc();
+
+    // The products at the trial point can overflow when the direction is
+    // huge (e.g. right after the artificial bounds of a free variable moved).
+    // The corrector is optional: keep the current direction.
+    if (it_->isResNan() || it_->isResInf()) {
+      logger_.printInfo("Corrector skipped, right-hand side is not finite\n");
+      break;
+    }
 
     NewtonDir corrector(m_, n_);
     if (solveNewtonSystem(corrector)) return true;

@@ -91,7 +91,9 @@ class Model {
 
   void nzBounds();
 
-  void adjustFreeVars(std::vector<double>& x, std::vector<double>& xl,
+  // Move the artificial bounds of free variables that are close to them.
+  // Returns true if any bound moved.
+  bool adjustFreeVars(const std::vector<double>& x, std::vector<double>& xl,
                       std::vector<double>& xu, const Logger& logger);
 
   void saveBounds();

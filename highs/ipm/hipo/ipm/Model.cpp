@@ -1,5 +1,7 @@
 #include "Model.h"
 
+#include <cmath>
+
 #include "Parameters.h"
 #include "Status.h"
 #include "ipm/IpxWrapper.h"
@@ -417,28 +419,32 @@ void Model::printDense() const {
   printf("offset %6.2f\n", offset_);
 }
 
-void Model::adjustFreeVars(std::vector<double>& x, std::vector<double>& xl,
-                           std::vector<double>& xu, const Logger& logger) {
+bool Model::adjustFreeVars(const std::vector<double>& x,
+                           std::vector<double>& xl, std::vector<double>& xu,
+                           const Logger& logger) {
+  // A free variable has artificial bounds [-b, b]. When it gets close to one
+  // of them, move both to +-kFreeVarsMoveFactor * |x|:
+  // - moving both keeps the box centred at zero, so that the barrier terms of
+  //   the artificial bounds do not push the variable further out;
+  // - moving them well beyond the threshold avoids moving them again at every
+  //   iteration while the variable keeps growing.
+  bool moved = false;
   for (Int i : free_variables_) {
-    if (x[i] < lower_[i] * kFreeVarsCloseRatio) {
-      // getting close to lower bound
-      const double new_lower = x[i] / kFreeVarsCloseRatio;
+    if (x[i] < lower_[i] * kFreeVarsCloseRatio ||
+        x[i] > upper_[i] * kFreeVarsCloseRatio) {
+      const double bound = std::abs(x[i]) * kFreeVarsMoveFactor;
       logger.printDetailed(
-          "Free var %5d is at %8.1e with lb %8.1e, lb changed to %8.1e\n", i,
-          x[i], lower_[i], new_lower);
-      lower_[i] = new_lower;
+          "Free var %5d is at %8.1e with bounds [%8.1e, %8.1e], bounds "
+          "changed to +-%8.1e\n",
+          i, x[i], lower_[i], upper_[i], bound);
+      lower_[i] = std::min(lower_[i], -bound);
+      upper_[i] = std::max(upper_[i], bound);
       xl[i] = x[i] - lower_[i];
-    }
-    if (x[i] > upper_[i] * kFreeVarsCloseRatio) {
-      // getting close to upper bound
-      const double new_upper = x[i] / kFreeVarsCloseRatio;
-      logger.printDetailed(
-          "Free var %5d is at %8.1e with ub %8.1e, ub changed to %8.1e\n", i,
-          x[i], upper_[i], new_upper);
-      upper_[i] = new_upper;
       xu[i] = upper_[i] - x[i];
+      moved = true;
     }
   }
+  return moved;
 }
 
 void Model::saveBounds() {

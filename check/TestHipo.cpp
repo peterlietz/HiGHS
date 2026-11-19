@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <vector>
 
@@ -131,6 +132,114 @@ TEST_CASE("test-hipo-freevar", "[highs_hipo]") {
   Highs highs;
   runHipoTest(highs, "perold.mps", -9.381e3, expected_status, "on");
   runHipoTest(highs, "perold.mps", -9.381e3, expected_status, "off");
+  highs.resetThreadScheduler(true);
+}
+
+// min c'x s.t. Ax >= b with free x, random entries +-1..9, built around a
+// point x0 with entries up to 1e7 (c = A'y for some y >= 0, so the LP is
+// bounded). Integer data from splitmix64, so the LP is the same everywhere.
+static HighsLp largeFreeVarsLp(const HighsInt num_col, const HighsInt num_row,
+                               const int64_t scale, uint64_t seed) {
+  auto next = [&seed]() {
+    uint64_t z = (seed += 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
+  };
+  const HighsInt per_row = 4;
+  std::vector<int64_t> x0(num_col);
+  for (auto& v : x0) v = int64_t(next() % uint64_t(2 * scale + 1)) - scale;
+  std::vector<std::vector<std::pair<HighsInt, int64_t>>> rows(num_row);
+  for (auto& row : rows) {
+    while (HighsInt(row.size()) < per_row) {
+      const HighsInt j = next() % num_col;
+      bool found = false;
+      for (const auto& entry : row) found = found || entry.first == j;
+      if (!found) row.push_back({j, 0});
+    }
+    for (auto& entry : row) {
+      entry.second = 1 + int64_t(next() % 9);
+      if (next() % 2) entry.second = -entry.second;
+    }
+  }
+  HighsLp lp;
+  lp.num_col_ = num_col;
+  lp.num_row_ = num_row;
+  std::vector<int64_t> cost(num_col, 0);
+  std::vector<std::vector<std::pair<HighsInt, int64_t>>> cols(num_col);
+  for (HighsInt i = 0; i < num_row; i++) {
+    int64_t y = 0, s = 0, ax = 0;
+    if (next() % 2) y = next() % 10;
+    if (next() % 2) s = next() % uint64_t(scale / 10);
+    for (const auto& entry : rows[i]) {
+      cost[entry.first] += entry.second * y;
+      ax += entry.second * x0[entry.first];
+      cols[entry.first].push_back({i, entry.second});
+    }
+    lp.row_lower_.push_back(double(ax - s));
+    lp.row_upper_.push_back(kHighsInf);
+  }
+  for (int64_t c : cost) lp.col_cost_.push_back(double(c));
+  lp.col_lower_.assign(num_col, -kHighsInf);
+  lp.col_upper_.assign(num_col, kHighsInf);
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0};
+  for (const auto& col : cols) {
+    for (const auto& entry : col) {
+      lp.a_matrix_.index_.push_back(entry.first);
+      lp.a_matrix_.value_.push_back(double(entry.second));
+    }
+    lp.a_matrix_.start_.push_back(lp.a_matrix_.index_.size());
+  }
+  return lp;
+}
+
+TEST_CASE("test-hipo-large-free-vars", "[highs_hipo]") {
+  // Free variables far beyond their initial artificial bounds of +-1e4: HiPO
+  // used to move one bound at a time to 2|x|, at almost every iteration, and
+  // took 60 iterations here (21 with bounds moved to +-10|x|; 22 with bounds
+  // +-1e9 instead of free columns)
+  Highs highs;
+  highs.setOptionValue("output_flag", dev_run);
+  highs.setOptionValue("solver", kHipoString);
+  highs.setOptionValue("run_crossover", kHighsOffString);
+  highs.setOptionValue("presolve", kHighsOffString);
+  REQUIRE(highs.passModel(largeFreeVarsLp(500, 1000, 10000000, 1)) ==
+          HighsStatus::kOk);
+  REQUIRE(highs.run() == HighsStatus::kOk);
+  REQUIRE(highs.getModelStatus() == HighsModelStatus::kOptimal);
+  REQUIRE(highs.getInfo().ipm_iteration_count <= 35);
+  highs.resetThreadScheduler(true);
+}
+
+TEST_CASE("test-hipo-huge-finite-bound", "[highs_hipo]") {
+  // min x0 + x1 + x2 s.t. x0 + x1 + x2 >= 1, 0 <= x0 <= 1e200, x1 free,
+  // x2 >= 0, with infinite_bound = inf so that 1e200 is a finite bound. The
+  // iterate is of order 1e198, and moving the artificial bounds of x1 makes
+  // the products at the trial point of the centrality corrector overflow.
+  // The corrector must be skipped rather than end the solve with NaN.
+  HighsLp lp;
+  lp.num_col_ = 3;
+  lp.num_row_ = 1;
+  lp.col_cost_ = {1, 1, 1};
+  lp.col_lower_ = {0, -kHighsInf, 0};
+  lp.col_upper_ = {1e200, kHighsInf, kHighsInf};
+  lp.row_lower_ = {1};
+  lp.row_upper_ = {kHighsInf};
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0, 1, 2, 3};
+  lp.a_matrix_.index_ = {0, 0, 0};
+  lp.a_matrix_.value_ = {1, 1, 1};
+  Highs highs;
+  highs.setOptionValue("output_flag", dev_run);
+  highs.setOptionValue("infinite_bound", kHighsInf);
+  highs.setOptionValue("solver", kHipoString);
+  highs.setOptionValue("presolve", kHighsOffString);
+  highs.setOptionValue("time_limit", 10.0);
+  REQUIRE(highs.passModel(lp) == HighsStatus::kOk);
+  REQUIRE(highs.run() == HighsStatus::kOk);
+  REQUIRE(highs.getModelStatus() == HighsModelStatus::kOptimal);
+  REQUIRE(std::abs(highs.getInfo().objective_function_value - 1) < 1e-6);
   highs.resetThreadScheduler(true);
 }
 
