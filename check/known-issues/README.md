@@ -62,6 +62,7 @@ have no test here:
 | Issue | Fixed by | Test upstream |
 |---|---|---|
 | #3090 MIP: presolve wrongly declares infeasibility (dominated columns) | #3091 | |
+| #3642 wrong "Optimal" with a MIP start whose image presolve cut off | #3762 (with #3634, #3751) | `issue-3642`, `issue-3634` in `check/TestCheckSolution.cpp`; here `issue-3642-mip-start-image-infeasible-after-presolve`. A start objective not attained in the reduced space still cuts off the optimum when the objective is integral: `issue-3642-mip-start-unattained-objective` |
 | #3700 highspy writes the log header to stdout at the first `Highs()` | #3697, #3704 (once per process is intended) | |
 | #3710 `Highs::crossover` segfaults before any `run()` | #3731 | `issue-3710` in `check/TestCrossover.cpp` |
 | #3715 HiPO stops on an offset-free P-D gap (offset in the model) | #3744 | `issue-3715` in `check/TestLpSolvers.cpp`; here `issue-3715-hipo-model-offset`. Offsets created by presolve still fail: `issue-3715-hipo-presolve-offset` |
