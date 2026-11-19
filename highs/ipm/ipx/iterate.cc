@@ -232,7 +232,18 @@ bool Iterate::optimal() const {
     Evaluate();
     double pobj = pobjective_after_postproc();
     double dobj = dobjective_after_postproc();
-    double ave_obj = 0.5 * (pobj + dobj - 2 * offset_);
+    // Measure the gap relative to the objective of the user's model after
+    // postprocessing, as IPX's check of the postprocessed solution and
+    // HiGHS's final check do: with the fixed (and implied) variables that IPX
+    // has removed, whose cost (offset_) may cancel the rest of the objective,
+    // and with the model's offset, which may contain the cost of columns
+    // fixed by a presolve. pobj and dobj include the offset; the objective
+    // of a dualized model without the offset is that of the user's model
+    // negated.
+    const double offset = model_.offset();
+    const double without_offset = 0.5 * (pobj + dobj) - offset;
+    const double ave_obj =
+        offset + (model_.dualized() ? -without_offset : without_offset);
     double gap = pobj - dobj;
     const double abs_gap = std::abs(gap);
     const double obj_measure = 1.0+std::abs(ave_obj);
