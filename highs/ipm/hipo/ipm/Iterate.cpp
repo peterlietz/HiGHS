@@ -629,7 +629,10 @@ void Iterate::saveBest(double feas_tol, double opt_tol, Int iter) {
 }
 
 bool Iterate::resetBest(Int iter) {
-  if (iter == best_iter) return false;
+  // No best iterate has been saved (e.g. the violation has been infinite in
+  // every iteration so far): there is nothing to reset to, so keep the
+  // current iterate.
+  if (best_iter < 0 || iter == best_iter) return false;
 
   x = best_x;
   xl = best_xl;
