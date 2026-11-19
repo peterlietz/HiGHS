@@ -59,6 +59,10 @@ struct Info {
   // True if ipx was invoked, whether to refine solution or for crossover
   bool ipx_used = false;
 
+  // True if HiPO stopped after its analyse phase because the LP is better
+  // solved by IPX; the caller is expected to run IPX on it
+  bool ipx_preferred = false;
+
   // Info from ipx
   ipx::Info ipx_info;
 

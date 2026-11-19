@@ -54,6 +54,12 @@ const double kUplookSpopsRatioUpper = 100;
 // parameters for skipping AS or NE
 const double kSkipSystemNzBoundsRatio = 50.0;
 
+// parameters for leaving a network LP to IPX: the factorisation is predicted to
+// need more than this many flops per nonzero of A, and more than this many
+// flops in total
+const double kIpxPreferredFlopsPerNz = 1e5;
+const double kIpxPreferredFlopsMin = 1e9;
+
 // parameters for iterative refinement
 const Int kRefineMaxIter = 3;
 const double kRefineTol = 1e-12;

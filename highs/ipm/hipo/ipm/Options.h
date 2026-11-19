@@ -23,6 +23,10 @@ struct Options {
   double optimality_tol = kIpmTolDefault;
   double crossover_tol = kIpmTolDefault;
   bool refine_with_ipx = true;
+
+  // Leave an LP to IPX, before the first iteration, if the factorisation is
+  // predicted to be far more expensive than IPX (see Solver::ipxPreferred)
+  bool allow_ipx_instead = false;
   double time_limit = -1.0;
   Int block_size = 0;
   Int random_seed = 0;
