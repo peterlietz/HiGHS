@@ -102,6 +102,13 @@ if ((NOT FAST_BUILD OR ALL_TESTS) AND NOT (BUILD_EXTRA_UNIT_ONLY))
       message(STATUS ${TEST_SOURCES})
   endif()
 
+  # Reproducers of issues reported upstream, one file per issue (see
+  # check/known-issues/README.md). Globbed, so that each issue's commit only
+  # adds files and can be dropped on its own when rebasing.
+  file(GLOB KNOWN_ISSUE_TESTS CONFIGURE_DEPENDS
+       ${CMAKE_CURRENT_SOURCE_DIR}/known-issues/Test*.cpp)
+  list(APPEND TEST_SOURCES ${KNOWN_ISSUE_TESTS})
+
   add_executable(unit_tests ${TEST_SOURCES})
 
   set_target_properties(unit_tests PROPERTIES UNITY_BUILD OFF)
