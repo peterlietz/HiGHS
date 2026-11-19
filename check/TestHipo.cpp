@@ -293,6 +293,84 @@ TEST_CASE("test-hipo-ordering-stop", "[highs_hipo]") {
           0);
 }
 
+TEST_CASE("test-hipo-inf-iterate", "[highs_hipo]") {
+  // min   1e19 x + y
+  // s.t.  x + y >= 1
+  //       0 <= x <= 1e300, y free
+  //
+  // With infinite_bound = inf, the bound 1e300 is finite. In the starting
+  // point, mu = sum xu * zu overflows and the iterate becomes infinite at
+  // iteration 0. HiPO used to carry on, switch to FactorHighs after the NaN
+  // direction and reset to a best iterate that was never saved, which
+  // crashed in Model::resetBounds() because y is free.
+
+  HighsLp lp;
+  lp.num_col_ = 2;
+  lp.num_row_ = 1;
+  lp.col_cost_ = {1e19, 1};
+  lp.col_lower_ = {0, -kHighsInf};
+  lp.col_upper_ = {1e300, kHighsInf};
+  lp.row_lower_ = {1};
+  lp.row_upper_ = {kHighsInf};
+  lp.a_matrix_.start_ = {0, 1, 2};
+  lp.a_matrix_.index_ = {0, 0};
+  lp.a_matrix_.value_ = {1, 1};
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+
+  Highs h;
+  h.setOptionValue("output_flag", dev_run);
+  h.setOptionValue("infinite_bound", kHighsInf);
+  REQUIRE(h.passModel(lp) == HighsStatus::kOk);
+  h.setOptionValue("solver", "hipo");
+  h.setOptionValue("presolve", "off");
+  h.run();
+  const HighsModelStatus model_status = h.getModelStatus();
+  REQUIRE((model_status == HighsModelStatus::kOptimal ||
+           model_status == HighsModelStatus::kSolveError));
+  h.resetThreadScheduler(true);
+}
+
+TEST_CASE("test-hipo-no-best-iterate", "[highs_hipo]") {
+  // min   1000 x1 + y + 1e-6 x3
+  // s.t.  x1 + y + 1e-8 x3 >= 1
+  //       0 <= x1 <= 1e306, y free, x3 >= 0
+  //
+  // With infinite_bound = inf, the starting point is finite but its primal
+  // infeasibility overflows (column scaling of the bound 1e306), so no best
+  // iterate is saved at iteration 0. The direction at iteration 1 is NaN,
+  // so HiPO switches to FactorHighs and resets to the best iterate; that
+  // reset used to copy the empty best iterate and crash in
+  // Model::resetBounds() because y is free. The optimum is y = 1 with
+  // objective 1.
+
+  HighsLp lp;
+  lp.num_col_ = 3;
+  lp.num_row_ = 1;
+  lp.col_cost_ = {1000, 1, 1e-6};
+  lp.col_lower_ = {0, -kHighsInf, 0};
+  lp.col_upper_ = {1e306, kHighsInf, kHighsInf};
+  lp.row_lower_ = {1};
+  lp.row_upper_ = {kHighsInf};
+  lp.a_matrix_.start_ = {0, 1, 2, 3};
+  lp.a_matrix_.index_ = {0, 0, 0};
+  lp.a_matrix_.value_ = {1, 1, 1e-8};
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+
+  Highs h;
+  h.setOptionValue("output_flag", dev_run);
+  h.setOptionValue("infinite_bound", kHighsInf);
+  REQUIRE(h.passModel(lp) == HighsStatus::kOk);
+  h.setOptionValue("solver", "hipo");
+  h.setOptionValue("presolve", "off");
+  h.run();
+  const HighsModelStatus model_status = h.getModelStatus();
+  REQUIRE((model_status == HighsModelStatus::kOptimal ||
+           model_status == HighsModelStatus::kSolveError));
+  if (model_status == HighsModelStatus::kOptimal)
+    REQUIRE(std::fabs(h.getInfo().objective_function_value - 1) < 1e-6);
+  h.resetThreadScheduler(true);
+}
+
 TEST_CASE("test-hipo-linear-solver", "[highs_hipo]") {
   // problem size
   const HighsInt n = 5;
