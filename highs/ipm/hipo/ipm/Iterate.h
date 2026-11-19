@@ -50,6 +50,8 @@ struct Iterate {
   Int bad_iter_{};
   double largest_dx_x_{}, largest_dy_y_{};
   double best_pinf_ = kHighsInf, best_dinf_ = kHighsInf;
+  Int gap_stall_iter_{};
+  double prev_pdgap_ = kHighsInf;
 
   double best_violation = kHighsInf;
   Int best_iter = -1;
