@@ -2907,3 +2907,63 @@ TEST_CASE("issue-3768", "[highs_test_mip_solver]") {
   REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
   h.resetThreadScheduler(true);
 }
+
+TEST_CASE("mip-root-restart-first", "[highs_test_mip_solver]") {
+  // On these models, root separation stops for a restart (stall = -1).
+  // With mip_root_restart_first, the expensive root heuristics are then
+  // skipped, and each such skip must be followed by a restart. On 2171, the
+  // run without the option doesn't restart at all: RENS runs before the
+  // pending restart, and its dive finds the optimal solution, so the root
+  // node is solved. issue-3171 restarts with or without the option. The
+  // optimal objective value is unchanged
+  auto countOf = [](const std::string& log, const std::string& text) {
+    HighsInt count = 0;
+    for (size_t pos = log.find(text); pos != std::string::npos;
+         pos = log.find(text, pos + 1))
+      count++;
+    return count;
+  };
+  for (const std::string model : {"2171", "issue-3171"}) {
+    const std::string filename =
+        std::string(HIGHS_DIR) + "/check/instances/" + model + ".mps";
+    double objective[2];
+    for (HighsInt k = 0; k < 2; k++) {
+      std::string log;
+      Highs h;
+      // Logging must be on for the callback to see the messages
+      h.setOptionValue("log_to_console", dev_run);
+      h.setOptionValue("log_dev_level", kHighsLogDevLevelInfo);
+      h.setOptionValue("mip_root_restart_first", k == 1);
+      REQUIRE(
+          h.setCallback([&log](int callback_type, const std::string& message,
+                               const HighsCallbackOutput*, HighsCallbackInput*,
+                               void*) {
+            if (callback_type == kCallbackLogging) log += message;
+          }) == HighsStatus::kOk);
+      REQUIRE(h.startCallback(kCallbackLogging) == HighsStatus::kOk);
+      REQUIRE(h.readModel(filename) == HighsStatus::kOk);
+      REQUIRE(h.run() == HighsStatus::kOk);
+      REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
+      objective[k] = h.getInfo().objective_function_value;
+      const HighsInt num_pending = countOf(log, "Root restart pending");
+      const HighsInt num_restart = countOf(log, "columns, restarting");
+      INFO(model << ", mip_root_restart_first = " << (k == 1) << ": "
+                 << num_pending << " pending restarts, " << num_restart
+                 << " restarts");
+      if (k == 0) {
+        REQUIRE(num_pending == 0);
+        if (model == "2171") {
+          REQUIRE(num_restart == 0);
+        } else {
+          REQUIRE(num_restart > 0);
+        }
+      } else {
+        REQUIRE(num_pending > 0);
+        REQUIRE(num_restart >= num_pending);
+      }
+      h.resetGlobalScheduler(true);
+    }
+    REQUIRE(std::fabs(objective[0] - objective[1]) <=
+            1e-6 * (1 + std::fabs(objective[0])));
+  }
+}

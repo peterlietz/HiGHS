@@ -2514,6 +2514,22 @@ restart:
   rootlpsolobj = getLp().getObjective();
   getLp().setIterationLimit(std::max(10000, int(10 * avgrootlpiters)));
 
+  // Separation stops with stall = -1 only for a MIP (not a sub-MIP) with
+  // presolve on and at least 10% inactive integer columns. That percentage
+  // cannot fall, so if restarts are allowed, the restart decision at the end
+  // of this function restarts unless the root node is solved. With
+  // mip_root_restart_first, the expensive root heuristics (RENS, feasibility
+  // pump) are then left to the root node after the restart, where the model
+  // is smaller. The cheap ones still run: an improved incumbent strengthens
+  // reduced-cost fixing, and so the restart
+  const bool skip_root_heuristics =
+      mipsolver.options_mip_->mip_root_restart_first &&
+      mipsolver.options_mip_->mip_allow_restart && stall == -1;
+  if (skip_root_heuristics)
+    highsLogDev(mipsolver.options_mip_->log_options, HighsLogType::kInfo,
+                "Root restart pending: skipping RENS and the feasibility "
+                "pump\n");
+
   if (mipsolver.options_mip_->mip_heuristic_run_zi_round) {
     heuristics.ziRound(worker, firstlpsol);
     heuristics.flushStatistics(mipsolver, worker);
@@ -2605,6 +2621,8 @@ restart:
     }
 
     if (upper_limit != kHighsInf && !moreHeuristicsAllowed()) break;
+    // RENS and the feasibility pump run after the pending restart
+    if (skip_root_heuristics) break;
 
     if (checkLimits()) return clockOff(profiling);
     if (mipsolver.options_mip_->mip_heuristic_run_rens) {
@@ -2706,7 +2724,8 @@ restart:
         profiling->stop(kMipClockFinishAnalyticCentreComputation);
       }
       double fixingRate = percentageInactiveIntegers();
-      if (fixingRate >= 2.5 + 7.5 * mipsolver.submip ||
+      // Having skipped the root heuristics for a pending restart, restart
+      if (skip_root_heuristics || fixingRate >= 2.5 + 7.5 * mipsolver.submip ||
           (!mipsolver.submip && fixingRate > 0 && numRestarts == 0)) {
         tg.cancel();
         highsLogUser(mipsolver.options_mip_->log_options, HighsLogType::kInfo,

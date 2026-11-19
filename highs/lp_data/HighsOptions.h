@@ -532,6 +532,7 @@ struct HighsOptionsStruct {
   bool mip_improving_solution_report_sparse;
   std::string mip_improving_solution_file;
   bool mip_root_presolve_only;
+  bool mip_root_restart_first;
   HighsInt mip_lifting_for_probing;
   bool mip_search_simulate_concurrency;
   bool mip_allow_cut_separation_at_nodes;
@@ -708,6 +709,7 @@ struct HighsOptionsStruct {
         mip_improving_solution_report_sparse(false),
         mip_improving_solution_file(""),
         mip_root_presolve_only(false),
+        mip_root_restart_first(false),
         mip_lifting_for_probing(-1),
         mip_search_simulate_concurrency(false),
         // clang-format off
@@ -1202,6 +1204,16 @@ class HighsOptions : public HighsOptionsStruct {
         "mip_root_presolve_only",
         "Whether MIP presolve is only applied at the root node", advanced,
         &mip_root_presolve_only, false);
+    records.push_back(record_bool);
+
+    record_bool = new OptionRecordBool(
+        "mip_root_restart_first",
+        "When root cut separation stops because enough integer columns are "
+        "inactive for a restart, restart at once rather than first running "
+        "the expensive root heuristics (RENS, feasibility pump) on the "
+        "model before the restart; they run after the restart on the "
+        "reduced model",
+        advanced, &mip_root_restart_first, false);
     records.push_back(record_bool);
 
     record_int = new OptionRecordInt(
