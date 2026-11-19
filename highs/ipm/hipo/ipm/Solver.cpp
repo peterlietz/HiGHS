@@ -1145,6 +1145,18 @@ shouldTerminate Solver::checkBadIter() {
     bool dobj_is_larger =
         it_->dobj > std::max(std::abs(it_->pobj) * kDivergeTol, 1.0);
 
+    // The objectives alone are not evidence of infeasibility: the test is not
+    // invariant to shifting the objective, and if c^T x is (close to) zero,
+    // for example for c = 0, any dual objective above 1 passes it. Also
+    // require that the iterate is a certificate of infeasibility for points
+    // of its own magnitude (written so that NaN fails).
+    if (pobj_is_larger &&
+        !(it_->dualInfeasCertificate() >= kInfeasCertificateTol))
+      pobj_is_larger = false;
+    if (dobj_is_larger &&
+        !(it_->primalInfeasCertificate() >= kInfeasCertificateTol))
+      dobj_is_larger = false;
+
     if (pobj_is_larger) {
       // problem is likely to be primal unbounded, i.e. dual infeasible
       logger_.print("=== Dual infeasible\n");
