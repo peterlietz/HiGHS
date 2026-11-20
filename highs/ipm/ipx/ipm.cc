@@ -697,6 +697,9 @@ void IPM::MakeStep(const Step& step, bool isCentring) {
     const double presidual = iterate_->presidual();
     const double dresidual = iterate_->dresidual();
     const double complementarity = iterate_->complementarity();
+    const double objective_gap = std::abs(
+        iterate_->pobjective_after_postproc() -
+        iterate_->dobjective_after_postproc());
     
     iterate_->Update(step_primal_, &step.x[0], &step.xl[0], &step.xu[0],
                      step_dual_,   &step.y[0], &step.zl[0], &step.zu[0]);
@@ -727,8 +730,27 @@ void IPM::MakeStep(const Step& step, bool isCentring) {
             std::min(step_primal_, step_dual_) >= large_step_thresh 
             && iterate_->complementarity() > reduction_thresh * complementarity;
 
+        // For a feasible iterate, the objective gap is the complementarity
+        // gap plus terms from the residuals. If the complementarity gap
+        // explains only a small part of an objective gap that a step (of any
+        // length) doesn't reduce, the rest is rounding error in the
+        // objectives, which further steps can't remove. This happens when
+        // the objective's terms are much larger than its value, for example
+        // when a large objective constant cancels c'x: the iterate is then
+        // frozen while the step lengths stay between the thresholds above.
+        const double rounding_gap_ratio = 0.01;
+        const double new_objective_gap = std::abs(
+            iterate_->pobjective_after_postproc() -
+            iterate_->dobjective_after_postproc());
+        const bool objective_gap_stalled =
+            iterate_->feasible()
+            && iterate_->complementarity() <
+                   rounding_gap_ratio * new_objective_gap
+            && new_objective_gap > reduction_thresh * objective_gap;
+
         if (std::min(step_primal_, step_dual_) < 0.05 ||
-            presidual_stalled || dresidual_stalled || complementarity_stalled)
+            presidual_stalled || dresidual_stalled ||
+            complementarity_stalled || objective_gap_stalled)
             num_bad_iter_++;
         else
             num_bad_iter_ = 0;

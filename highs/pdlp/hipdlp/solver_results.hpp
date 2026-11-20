@@ -21,6 +21,8 @@ enum class TerminationStatus {
   MAXITER,
   TIMEOUT,
   INTERRUPT,
+
+  STALLED,
   ERROR
 };
 

@@ -95,3 +95,28 @@ TEST_CASE("test-ipx", "[highs_ipx]") {
   Highs h;
   h.resetThreadScheduler(true);
 }
+
+TEST_CASE("ipx-stall-cancelling-constant", "[highs_ipx]") {
+  // A balanced transportation LP (5 supplies of about 4e7, 8 demands) whose
+  // objective constant -59861304428 cancels the optimal c'x, so that the
+  // optimum is 0. After HiGHS presolve, IPX reaches an objective gap of
+  // 2.2e-6, the rounding error of objectives whose terms are about 6e10, at
+  // iteration 11 and keeps it, with complementarity about 3e-22 and steps
+  // of 1.00 (primal) and 0.31 (dual), which its other bad-iteration rules
+  // don't count. It used to iterate until the iteration or time limit. Now
+  // it stops with "no progress", and simplex cleans up or HiGHS's final
+  // check accepts the point
+  const std::string model_file =
+      std::string(HIGHS_DIR) + "/check/instances/cancelling-constant.mps";
+  for (const std::string crossover : {kHighsOnString, kHighsOffString}) {
+    Highs h;
+    h.setOptionValue("output_flag", dev_run);
+    h.setOptionValue("solver", kIpxString);
+    h.setOptionValue("run_crossover", crossover);
+    h.setOptionValue("ipm_iteration_limit", 1000);
+    REQUIRE(h.readModel(model_file) == HighsStatus::kOk);
+    h.run();
+    REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
+    REQUIRE(h.getInfo().ipm_iteration_count < 100);
+  }
+}
