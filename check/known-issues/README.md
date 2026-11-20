@@ -25,10 +25,15 @@ can be dropped during a rebase without conflicts:
 ## Fixes
 
 Our fixes are on branches named `fixes/<issue>-<topic>` or `fixes/<topic>`,
-each on top of `latest`, or on top of the fix it depends on. The test
-headers name them; commit hashes change with every rebase, so nothing refers
-to them. The branch `latest-with-fixes` is `latest` with every fix branch
-merged.
+each on top of `latest`, or on top of the fix it depends on, so
+`git diff latest fixes/<name>` is the fix. The test headers name the
+branches; commit hashes change with every rebase, so nothing refers to
+them. The branch `latest-with-fixes` is `known-issues` with every fix branch
+merged in.
+
+`fixes.txt` maps each case to the fix branches that make it pass on their
+own. A case that passes only with several fixes together, or with none,
+isn't listed.
 
 ## Running
 
@@ -46,12 +51,48 @@ build-hipo/bin/unit_tests "issue-3724*" -s                 # one, with details
 
 A result of "All tests passed (N assertions in M test cases)" means that every
 tracked problem is still present. A failing test case means that upstream
-changed the behaviour; read its output. Any failed assertion counts as
-"still present", including a setup failure, so `-s` shows which one fired.
+changed the behaviour; read its output.
 
-To check our fixes, merge `latest-with-fixes` into a scratch branch of
-`known-issues` and run again. Now every test case with a fix should be
-reported as failed, because each one passes.
+`report.py` runs every case on its own and prints a table of what is still
+present and what passes unexpectedly:
+
+```shell
+python3 -I check/known-issues/report.py build-hipo/bin/unit_tests check/known-issues
+```
+
+On the fork, the workflow `.github/workflows/known-issues.yml` runs it on
+each push of `known-issues` (Ubuntu, Release, HiPO) and puts the table in
+the job summary: one job on `known-issues` and one per `fixes/*` branch,
+which merges that branch into `known-issues` first. The fix branches don't
+contain the workflow, so pushing one runs nothing; to report on one of them
+after changing it:
+
+```shell
+gh workflow run known-issues.yml --ref known-issues -f branch=fixes/<name>
+```
+
+Besides this directory, `known-issues` only adds the workflow and a few
+lines in `check/CMakeLists.txt`; no fix branch touches either, so the
+merges don't conflict. It is also the only workflow enabled on the fork:
+upstream's are disabled in the fork's Actions settings.
+
+- On `known-issues`, the job fails on an unexpected pass, a crash or a
+  failing regression test.
+- With a fix branch merged in, `report.py` finds the fix branches that the
+  commit contains (the branch itself and, for a stacked fix, the one
+  below). The cases that `fixes.txt` maps to them must pass ("fixed"); one
+  that is still present fails the job. Any other case that passes is
+  listed as "passes (not in fixes.txt)" without failing it. Crashes and
+  failing regression tests fail the job as before.
+
+The report writes issue numbers without a hash and doesn't name the
+upstream repository, so that it doesn't link to upstream. Any failed
+assertion counts as "still present", including a setup failure, so `-s`
+shows which one fired.
+
+To check our fixes together, run it on `latest-with-fixes`: every case in
+`fixes.txt` must be "fixed". Run directly, `unit_tests "[known-issue]"`
+reports each of them as failed, because each one passes.
 
 ## Fixed upstream
 

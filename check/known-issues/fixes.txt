@@ -1,0 +1,34 @@
+# Which fix branch makes which known-issue case pass.
+#
+# One line per case: the test case name, a colon, and the fix branches
+# that each make it pass on their own. report.py uses this with fix
+# branches merged in: a case mapped to a branch that the checked out commit
+# contains must pass, and an unexpected pass of an unmapped case is
+# reported, but doesn't fail the job. A case that passes only with
+# several fixes together, or that no fix makes pass, isn't listed.
+issue-3642-mip-start-unattained-objective: fixes/3642-mip-start-image
+issue-3699-integral-cut-coefficient-on-free-column: fixes/3699-cut-integral-coefficient
+issue-3705-user-solution-cut-off-by-presolve-dropped: fixes/3705-callback-solution-bound
+issue-3715-hipo-presolve-offset: fixes/3715-hipo-pd-objective-error
+issue-3718-hipo-cancelled-pivots-stall: fixes/3718-hipo-relative-pivot-reg
+issue-3724-hipo-predictor-sigma-network: fixes/3724-hipo-predictor-sigma
+issue-3736-hipo-uplooking-nan: fixes/3736-hipo-uplooking-relreg
+weakness-cancelling-constant-ipx: fixes/dominant-offset-ipx-pdlp fixes/ipx-hipdlp-stall-exit
+weakness-cancelling-constant-hipdlp: fixes/dominant-offset-ipx-pdlp fixes/ipx-hipdlp-stall-exit
+weakness-dominant-offset-ipx: fixes/dominant-offset-ipx-pdlp
+weakness-dominant-offset-pdlp: fixes/dominant-offset-ipx-pdlp
+weakness-dominant-offset-hipdlp: fixes/dominant-offset-ipx-pdlp
+weakness-hipo-checkiterate-inf-starting-point: fixes/hipo-checkiterate-inf
+weakness-hipo-dense-fill-network: fixes/hipo-dense-fill
+weakness-hipo-free-vars-large-values: fixes/hipo-free-vars
+weakness-hipo-qp-no-kkt-check: fixes/hipo-qp
+weakness-ipm-infeasibility-test-zero-objective: fixes/ipm-infeasibility-test
+weakness-ipm-infeasibility-test-free-variable: fixes/ipm-infeasibility-test
+weakness-ipx-endgame-divergence-lex-level2: fixes/ipx-endgame-recentring
+weakness-ipx-endgame-divergence-lex-level2-hipo: fixes/ipx-endgame-recentring
+weakness-ipx-fixed-column-gap: fixes/ipx-fixed-column-gap
+weakness-ipx-no-progress-crossover: fixes/ipx-no-progress-crossover
+weakness-ipx-rebalancing-no-progress: fixes/ipx-rebalancing-short-steps
+weakness-ipx-rebalancing-network-lp: fixes/ipx-rebalancing-short-steps
+weakness-mip-restart-root-ipm-warm-start: fixes/mip-restart-root-ipm
+weakness-mip-root-restart-first-rens-before-restart: fixes/mip-root-restart-first

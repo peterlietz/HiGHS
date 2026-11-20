@@ -1,0 +1,84 @@
+name: known-issues
+
+# Report which known issues (check/known-issues) are still present and which
+# pass unexpectedly, as a table in the job summary: once on known-issues,
+# and once on known-issues with each fixes/* branch merged in. The fix
+# branches sit on latest and contain no workflow, so pushing one runs
+# nothing; a push of known-issues reports on all of them. To report on one
+# fix branch only:
+#   gh workflow run known-issues.yml --ref known-issues -f branch=fixes/NAME
+#
+# On known-issues, the job fails on an unexpected pass, a crash or a failing
+# regression test of a fixed issue. With a fix branch merged in, the cases
+# that check/known-issues/fixes.txt maps to it must pass.
+on:
+  push:
+    branches: [known-issues]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Fix branch to report on (empty: known-issues and every fixes/* branch)"
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.branch }}
+  cancel-in-progress: true
+
+jobs:
+  branches:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: list
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          if [ -n "$BRANCH" ]; then
+            git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null
+            names="$BRANCH"
+          else
+            names="known-issues $(git ls-remote --heads origin 'fixes/*' | sed 's|.*refs/heads/||')"
+          fi
+          echo "list=$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' $names)" >> "$GITHUB_OUTPUT"
+
+  report:
+    needs: branches
+    name: report (${{ matrix.branch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(needs.branches.outputs.list) }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # all branches and their history: the merge needs the fix branch,
+          # and report.py checks which fix branches are ancestors of HEAD
+          fetch-depth: 0
+
+      - name: Merge the fix branch
+        if: matrix.branch != 'known-issues'
+        env:
+          BRANCH: ${{ matrix.branch }}
+        run: |
+          git -c user.name=known-issues -c user.email=known-issues@invalid \
+            merge --no-edit "origin/$BRANCH"
+
+      - name: Install OpenBLAS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenblas-dev
+
+      - name: Configure CMake
+        run: cmake -S . -B build -DHIPO=ON -DALL_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Report
+        run: python3 -I check/known-issues/report.py build/bin/unit_tests check/known-issues "$GITHUB_STEP_SUMMARY"
