@@ -46,7 +46,22 @@ build-hipo/bin/unit_tests "issue-3724*" -s                 # one, with details
 
 A result of "All tests passed (N assertions in M test cases)" means that every
 tracked problem is still present. A failing test case means that upstream
-changed the behaviour; read its output. Any failed assertion counts as
+changed the behaviour; read its output.
+
+`report.py` runs every case on its own and prints a table of what is still
+present and what passes unexpectedly:
+
+```shell
+python3 -I check/known-issues/report.py build-hipo/bin/unit_tests check/known-issues
+```
+
+On the fork, the workflow `.github/workflows/known-issues.yml` runs it on
+each push of `known-issues` (Ubuntu, Release, HiPO) and puts the table in
+the job summary. The job fails on an unexpected pass, a crash or a failing
+regression test. It is the one file outside this directory; upstream has no
+file of that name, so it doesn't conflict on a rebase. The report writes
+issue numbers without a hash and doesn't name the upstream repository, so
+that it doesn't link to upstream. Any failed assertion counts as
 "still present", including a setup failure, so `-s` shows which one fired.
 
 To check our fixes, merge `latest-with-fixes` into a scratch branch of

@@ -1,0 +1,33 @@
+name: known-issues
+
+# Report which known issues (check/known-issues) are still present and which
+# pass unexpectedly, as a table in the job summary. The job fails on an
+# unexpected pass, a crash or a failing regression test of a fixed issue.
+on:
+  push:
+    branches: [known-issues]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install OpenBLAS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenblas-dev
+
+      - name: Configure CMake
+        run: cmake -S . -B build -DHIPO=ON -DALL_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Report
+        run: python3 -I check/known-issues/report.py build/bin/unit_tests check/known-issues "$GITHUB_STEP_SUMMARY"
