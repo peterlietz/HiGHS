@@ -177,6 +177,7 @@ void Logger::printSummary(const SolverResults& results, HighsInt total_iter,
       {TerminationStatus::UNBOUNDED, "Unbounded"},
       {TerminationStatus::MAXITER, "Maxiter"},
       {TerminationStatus::TIMEOUT, "Timeout"},
+      {TerminationStatus::STALLED, "Stalled"},
       {TerminationStatus::ERROR, "Error"}};
 
   ss << "  - Termination Status: " << EnumToString(results.term_code, term_map);

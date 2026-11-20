@@ -134,13 +134,18 @@ HighsStatus solveLpHiPdlp(const HighsOptions& options, HighsTimer& timer,
       model_status = HighsModelStatus::kTimeLimit;
       break;
     }
+    case TerminationStatus::STALLED: {
+      model_status = HighsModelStatus::kUnknown;
+      break;
+    }
     default:
       assert(termination_status == TerminationStatus::ERROR);
       return HighsStatus::kError;
   }
   assert(termination_status == TerminationStatus::OPTIMAL ||
          termination_status == TerminationStatus::MAXITER ||
-         termination_status == TerminationStatus::TIMEOUT);
+         termination_status == TerminationStatus::TIMEOUT ||
+         termination_status == TerminationStatus::STALLED);
   // highs_solution.col_value = x;
   // highs_solution.col_value.resize(lp.num_col_);
   // highs_solution.row_dual = y;

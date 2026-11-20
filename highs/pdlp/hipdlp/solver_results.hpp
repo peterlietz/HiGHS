@@ -20,6 +20,8 @@ enum class TerminationStatus {
   UNBOUNDED,
   MAXITER,
   TIMEOUT,
+
+  STALLED,
   ERROR
 };
 
