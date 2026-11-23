@@ -37,6 +37,10 @@ public:
 
     Int maxiter() const { return maxiter_; }
     void maxiter(Int i) { maxiter_ = i; }
+    // If true, Driver() tolerates runs of bad iterations that are recentring
+    // the iterate (see MakeStep()). This is set for the main IPM, where
+    // IPX_STATUS_no_progress ends the solve.
+    void tolerate_recentring(bool b) { tolerate_recentring_ = b; }
     void PrintHeader();
 
 private:
@@ -45,6 +49,16 @@ private:
     // exceeds kDivergeTol times the smallest complementarity gap of all
     // iterates so far.
     static constexpr double kDivergeTol = 1e6;
+    // IPM terminates with no progress after kMaxBadIter bad iterations in a
+    // row. If recentring is tolerated, a run that is recentring the iterate
+    // (see MakeStep()) only ends the IPM after kMaxBadRun bad iterations in a
+    // row, a safety net that guarantees termination. A run is recentring
+    // while the iterate is within the feasibility tolerances and the
+    // objective gap is at most kMaxRunGapGrowth times its size at the start
+    // of the run.
+    static constexpr Int kMaxBadIter = 5;
+    static constexpr Int kMaxBadRun = 25;
+    static constexpr double kMaxRunGapGrowth = 10.0;
 
     void ComputeStartingPoint();
     void Predictor(Step& step);
@@ -79,6 +93,11 @@ private:
     // Counts the # bad iterations since the last good iteration. An iteration
     // is bad if the primal or dual step size is < 0.05.
     Int num_bad_iter_{0};
+    // max(|pobj-dobj|, complementarity) before the first iteration of the
+    // current run of bad iterations, and whether the run is recentring.
+    double run_gap_ref_{0.0};
+    bool run_recentring_{false};
+    bool tolerate_recentring_{false};
     // Smallest complementarity gap of all iterates so far.
     double best_complementarity_{0.0};
 
