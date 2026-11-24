@@ -373,6 +373,21 @@ void LpSolver::InteriorPointSolve() {
             info_.status_ipm = IPX_STATUS_imprecise;
     }
 
+    // An IPM that stopped without progress at an iterate that satisfies the
+    // feasibility tolerances, with a small objective gap, is close to the
+    // optimum: declare it "imprecise", so that crossover can start from it,
+    // rather than leaving the LP to be solved again from scratch. (Near an
+    // optimal objective value of zero, the relative objective gap can stay
+    // just above ipm_optimality_tol for good.)
+    if (info_.status_ipm == IPX_STATUS_no_progress &&
+        info_.rel_presidual <= 10 * control_.ipm_feasibility_tol() &&
+        info_.rel_dresidual <= 10 * control_.ipm_feasibility_tol() &&
+        std::abs(info_.rel_objgap) <= 1e-6) {
+        control_.hLog(
+            " IPM made no progress near the optimum; declared imprecise\n");
+        info_.status_ipm = IPX_STATUS_imprecise;
+    }
+
     // Assess the success of analytic centre calculation
     if (info_.centring_tried)
       info_.status_ipm = info_.centring_success ? IPX_STATUS_optimal : IPX_STATUS_imprecise;

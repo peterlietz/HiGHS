@@ -95,3 +95,44 @@ TEST_CASE("test-ipx", "[highs_ipx]") {
   Highs h;
   h.resetThreadScheduler(true);
 }
+
+TEST_CASE("ipx-no-progress-crossover", "[highs_ipx]") {
+  // A network flow LP whose optimum is the offset 4.8e-10, reduced from the
+  // root relaxation of a MIP. Its only cost is 465 on an empty column with
+  // bounds [0, 1]. IPX reaches an iterate with residuals of 1e-15 and an
+  // optimal primal objective, but its dual objective keeps alternating
+  // between -2.8e-7 and 2.4e-7, so the gap stays above ipm_optimality_tol
+  // and the IPM ends with no progress. IPX used to return without
+  // crossover then, and HiGHS solved the LP again from scratch by simplex
+  // (8 iterations here; more than an hour on the unreduced LP). Now the
+  // iterate is declared imprecise, and crossover starts from it.
+  HighsLp lp;
+  lp.num_col_ = 14;
+  lp.num_row_ = 11;
+  lp.offset_ = 4.8423043352840978e-10;
+  lp.col_cost_ = {0, 0, 0, 465, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  lp.col_lower_.assign(lp.num_col_, 0);
+  lp.col_upper_ = {19, 19, 19, 1, 10, 10, 10, 10, 10, 10, 10, 10, 1, 1};
+  lp.row_lower_ = {-17.112870449780871, 18.550502564612334, 0,
+                   0,                   0.97327352260981159, -0.68034983406164207,
+                   0,                   1.0086235279325266,  -1,
+                   -0.30154721648069616, 0.43763211483146358};
+  lp.row_upper_ = lp.row_lower_;
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0, 2, 3, 4, 4, 5, 7, 9, 11, 13, 15, 17, 19, 21, 21};
+  lp.a_matrix_.index_ = {10, 1, 10, 0, 2, 2, 3, 4, 5, 5, 7,
+                         5,  6, 6,  8, 7, 8, 7, 9, 3, 4};
+  lp.a_matrix_.value_ = {1, 1,  -1, -1, -1, 1,  -1, 1,  -1, 1, -1,
+                         1, -1, 1,  -1, 1,  -1, 1,  -1, 1,  -1};
+  Highs h;
+  h.setOptionValue("output_flag", dev_run);
+  h.setOptionValue("solver", kIpxString);
+  h.setOptionValue("presolve", kHighsOffString);
+  REQUIRE(h.passModel(lp) == HighsStatus::kOk);
+  h.run();
+  REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
+  // Without crossover from the IPX iterate: 8 simplex iterations
+  REQUIRE(h.getInfo().simplex_iteration_count == 0);
+  REQUIRE(std::fabs(h.getInfo().objective_function_value - lp.offset_) < 1e-9);
+  h.resetThreadScheduler(true);
+}
