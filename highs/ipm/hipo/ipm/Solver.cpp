@@ -1208,7 +1208,9 @@ shouldTerminate Solver::checkBadIter() {
           setStatus2(kStatusNoProgress);
           resetToBestIter(iter_);
         } else {
-          if (checkTerminationKkt(true)) {
+          // The QP check has no test of the objective gap, so it cannot
+          // accept a point where HiPO stagnated before closing the gap
+          if (!model_.qp() && checkTerminationKkt(true)) {
             logger_.printw(
                 "HiPO stagnated but HiGHS considers the solution "
                 "acceptable\n");
@@ -1249,7 +1251,7 @@ shouldTerminate Solver::checkTermination() {
       }
 
     } else {
-      terminate = model_.qp() ? true : checkTerminationKkt();
+      terminate = checkTerminationKkt();
       if (terminate) {
         logger_.print("=== Primal-dual feasible point found\n");
         setStatus1(kStatusOptimal);
@@ -1262,8 +1264,36 @@ shouldTerminate Solver::checkTermination() {
 
 isSuccess Solver::checkTerminationKkt(bool allow_tolerance_violation) {
   if (model_.qp()) {
-    // Not yet implemented for QP
-    logger_.printInfo("kktCheck skipped for QP\n");
+    // QP check: the test that HiGHS applies to the QP solution after HiPO
+    // returns (getQpKktFailures and checkOptimality in solveQp), on the
+    // original model, with the gradient c + Qx. It has no test of the
+    // objective gap, so it is only used once HiPO's own gap test is met.
+    logger_.printInfo("Solution may be optimal, perform QP kktCheck\n");
+    const HighsLp* lp = model_.lpOrig();
+    const HighsHessian* Q = model_.QOrig();
+    if (!lp || !Q) return false;
+
+    HighsSolution highs_solution;
+    getHipoNonVertexSolution(Hoptions_, *lp, model_.n_orig(), model_.m_orig(),
+                             model_.rhsOrig(), model_.constraintsOrig(), *this,
+                             HighsModelStatus::kOptimal, highs_solution);
+
+    std::vector<double> gradient;
+    Q->product(highs_solution.col_value, gradient);
+    for (Int j = 0; j < lp->num_col_; ++j) gradient[j] += lp->col_cost_[j];
+
+    HighsInfo highs_info;
+    getKktFailures(Hoptions_, true, *lp, gradient, highs_solution, highs_info);
+
+    if (highs_info.num_primal_infeasibilities == 0 &&
+        highs_info.num_dual_infeasibilities <= 0) {
+      logger_.printInfo("Check successful\n");
+      return true;
+    }
+    logger_.printInfo(
+        "Check failed: max primal infeasibility %.1e, max dual infeasibility "
+        "%.1e\n",
+        highs_info.max_primal_infeasibility, highs_info.max_dual_infeasibility);
     return false;
 
   } else {
