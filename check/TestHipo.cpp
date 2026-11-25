@@ -750,4 +750,115 @@ TEST_CASE("hipo-factor-dynamic-regularisation-recorded", "[highs_hipo]") {
   // a + e + 1e-12 rounds to a + e, and the second pivot is regularised
   REQUIRE(std::min(reg[0], reg[1]) == 0.0);
   REQUIRE(std::abs(std::max(reg[0], reg[1]) - thresh) <= 1e-15 * a);
+
+// Random min-cost flow on num_node nodes: a cycle of uncapacitated arcs (so
+// that it is feasible) and degree * num_node random capacitated arcs. The
+// Cholesky factor of A * D * A^T of such a graph is nearly dense.
+static HighsLp randomNetworkLp(const HighsInt num_node, const HighsInt degree,
+                               uint64_t seed) {
+  // splitmix64, so that the model is the same on every platform
+  auto next = [&seed]() {
+    uint64_t z = (seed += 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
+  };
+  const HighsInt m = num_node;
+  HighsLp lp;
+  lp.num_row_ = m;
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0};
+  auto addArc = [&lp](HighsInt tail, HighsInt head, double cost, double upper) {
+    lp.col_cost_.push_back(cost);
+    lp.col_lower_.push_back(0);
+    lp.col_upper_.push_back(upper);
+    lp.a_matrix_.index_.push_back(tail);
+    lp.a_matrix_.value_.push_back(-1);
+    lp.a_matrix_.index_.push_back(head);
+    lp.a_matrix_.value_.push_back(1);
+    lp.a_matrix_.start_.push_back(lp.a_matrix_.index_.size());
+  };
+  for (HighsInt i = 0; i < m; i++) addArc(i, (i + 1) % m, 1000, kHighsInf);
+  for (HighsInt k = 0; k < degree * m; k++) {
+    const HighsInt i = next() % m;
+    HighsInt j = next() % m;
+    if (i == j) j = (j + 1) % m;
+    const double cost = double(1 + next() % 100);
+    const double upper = double(1 + next() % 50);
+    addArc(i, j, cost, upper);
+  }
+  lp.num_col_ = lp.col_cost_.size();
+  std::vector<double> supply(m, 0);
+  for (HighsInt k = 0; k < m / 10; k++) {
+    const HighsInt i = next() % m;
+    const HighsInt j = next() % m;
+    const double v = double(1 + next() % 100);
+    supply[i] += v;
+    supply[j] -= v;
+  }
+  for (HighsInt i = 0; i < m; i++) lp.row_lower_.push_back(-supply[i]);
+  lp.row_upper_ = lp.row_lower_;
+  return lp;
+}
+
+TEST_CASE("test-hipo-network-ipx", "[highs_hipo]") {
+  // With solver = "ipm", a network LP whose factorisation is predicted to be
+  // nearly dense (1.3e10 flops, 1.8e5 per nonzero of A) is left to IPX; with
+  // solver = "hipo", HiPO solves it
+  std::string log_text;
+  Highs highs;
+  highs.setOptionValue("output_flag", true);
+  highs.setOptionValue("log_to_console", dev_run);
+  highs.setCallback(
+      [](int callback_type, const std::string& message,
+         const HighsCallbackOutput*, HighsCallbackInput*, void* user_data) {
+        if (callback_type == kCallbackLogging)
+          *static_cast<std::string*>(user_data) += message;
+      },
+      &log_text);
+  highs.startCallback(kCallbackLogging);
+  highs.setOptionValue("run_crossover", kHighsOffString);
+  REQUIRE(highs.passModel(randomNetworkLp(6000, 5, 1)) == HighsStatus::kOk);
+  const std::string switch_message = "solving it with IPX instead";
+
+  highs.setOptionValue("solver", kIpmString);
+  REQUIRE(highs.run() == HighsStatus::kOk);
+  REQUIRE(highs.getModelStatus() == HighsModelStatus::kOptimal);
+  REQUIRE(log_text.find(switch_message) != std::string::npos);
+  REQUIRE(log_text.find("IPX model has") != std::string::npos);
+  const HighsInt ipm_iteration_count = highs.getInfo().ipm_iteration_count;
+  const double objective = highs.getInfo().objective_function_value;
+
+  highs.setOptionValue("solver", kIpxString);
+  highs.clearSolver();
+  REQUIRE(highs.run() == HighsStatus::kOk);
+  REQUIRE(highs.getInfo().ipm_iteration_count == ipm_iteration_count);
+  REQUIRE(std::abs(highs.getInfo().objective_function_value - objective) <=
+          1e-9 * std::abs(objective));
+
+  log_text.clear();
+  highs.setOptionValue("solver", kHipoString);
+  highs.setOptionValue("ipm_iteration_limit", 1);
+  highs.clearSolver();
+  highs.run();
+  REQUIRE(highs.getModelStatus() == HighsModelStatus::kIterationLimit);
+  REQUIRE(log_text.find(switch_message) == std::string::npos);
+  REQUIRE(log_text.find("IPX model has") == std::string::npos);
+
+  // Matrices with at most two nonzeros per column that aren't network
+  // matrices are left to IPX as well: their bases are pseudoforests, so IPX's
+  // LU factors stay sparse. Here, a 2-matching (every column (+1, +1))
+  highs.setOptionValue("solver", kIpmString);
+  HighsLp lp = randomNetworkLp(6000, 5, 1);
+  for (HighsInt col = 0; col < lp.num_col_; col++)
+    lp.a_matrix_.value_[lp.a_matrix_.start_[col]] = 1;
+  lp.row_lower_.assign(lp.num_row_, 2);
+  lp.row_upper_ = lp.row_lower_;
+  log_text.clear();
+  REQUIRE(highs.passModel(lp) == HighsStatus::kOk);
+  highs.run();
+  REQUIRE(highs.getModelStatus() == HighsModelStatus::kIterationLimit);
+  REQUIRE(log_text.find(switch_message) != std::string::npos);
+  REQUIRE(log_text.find("IPX model has") != std::string::npos);
+  highs.resetThreadScheduler(true);
 }

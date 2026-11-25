@@ -14,6 +14,7 @@
 #include <cassert>
 
 #include "HighsExternalApi.h"
+#include "lp_data/HighsModelUtils.h"
 #include "lp_data/HighsOptions.h"
 #include "lp_data/HighsSolution.h"
 #include "util/stringutil.h"
@@ -537,6 +538,36 @@ HighsStatus solveHipo(const HighsOptions& options, HighsTimer& timer,
   fillInRhsAndConstraints(lp, rhs, constraints);
 
   hipo.solve();
+
+  // HiPO has found that the LP is better solved by IPX
+  if (hipo.getInfo().ipx_preferred) {
+    assert(Q.empty());
+    HighsStatus ipx_status =
+        solveLpIpx(options, timer, lp, highs_basis, highs_solution,
+                   model_status, highs_info, callback);
+    HighsModelStatus ipx_model_status = model_status;
+    if (ipx_model_status == HighsModelStatus::kOptimal && !highs_basis.valid) {
+      // Without a basis, HiGHS accepts the solution only if it passes a KKT
+      // check, so check it now, as HiPO does before it stops
+      HighsOptions check_options = options;
+      check_options.output_flag = false;
+      HighsInfo check_info;
+      lpNoBasisKktCheck(ipx_model_status, check_info, lp, highs_solution,
+                        check_options, "After IPX");
+    }
+    if (ipx_model_status != HighsModelStatus::kUnknown &&
+        ipx_model_status != HighsModelStatus::kSolveError)
+      return ipx_status;
+    // IPX has failed, so go back to HiPO, without the option of IPX
+    highsLogUser(options.log_options, HighsLogType::kWarning,
+                 "IPX has not solved the LP (model status %s): solving it "
+                 "with HiPO\n",
+                 utilModelStatusToString(ipx_model_status).c_str());
+    HighsOptions hipo_options = options;
+    hipo_options.solver = kHipoString;
+    return solveHipo(hipo_options, timer, lp, Q, highs_basis, highs_solution,
+                     model_status, highs_info, callback);
+  }
 
   // const bool report_solve_data =
   //    kHighsAnalysisLevelSolverSummaryData & options.highs_analysis_level;

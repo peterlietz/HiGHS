@@ -97,6 +97,21 @@ Int FactorHighsSolver::analyseNE(Symbolic& S) {
   return status;
 }
 
+double FactorHighsSolver::flopsNormalEquationsAmd() {
+  assert(kkt_.S.empty());
+  double flops = -1.0;
+  if (!kkt_.buildNEstructure()) {
+    Symbolic S{};
+    const std::string ordering = options_.ordering;
+    options_.ordering = kHipoAmdString;
+    if (!analyseNE(S)) flops = S.flops();
+    options_.ordering = ordering;
+    ordering_NE_ = "none";
+  }
+  kkt_.freeNEmemory();
+  return flops;
+}
+
 // =========================================================================
 // Factorise phase
 // =========================================================================
