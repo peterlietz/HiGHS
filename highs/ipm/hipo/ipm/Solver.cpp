@@ -1103,7 +1103,7 @@ shouldTerminate Solver::checkIterate() {
   } else if (it_->isInf()) {
     logger_.printInfo("\nIterate is inf\n");
     info_.error = kErrorNan;
-    bool terminate = true;
+    terminate = true;
   } else {
     for (Int i = 0; i < n_; ++i) {
       if ((model_.hasLb(i) && it_->xl[i] < 0) ||
