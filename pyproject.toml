@@ -102,6 +102,11 @@ install.components = ["python"]
 # Allows the HiPO IpxWrapper link to be compiled
 HIPO = "ON"
 HIPO_PYTHON = "ON"
+# Export only the module's entry point, so that another HiGHS loaded in the
+# same process (OR-Tools ships one) can't take over highspy's symbols
+CMAKE_CXX_VISIBILITY_PRESET = "hidden"
+CMAKE_C_VISIBILITY_PRESET = "hidden"
+CMAKE_VISIBILITY_INLINES_HIDDEN = "ON"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
