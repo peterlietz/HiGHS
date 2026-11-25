@@ -904,25 +904,26 @@ isFailure Solver::startingPoint() {
 }
 
 void Solver::sigmaAffine() {
-  sigma_ = kSigmaAffine;
+  const bool infeasible = it_->pinf > options_.feasibility_tol ||
+                          it_->dinf > options_.feasibility_tol;
+  sigma_ = infeasible ? std::max(kSigmaAffine, sigmaFromStepsizes())
+                      : kSigmaAffine;
 
   it_->data.back().sigma_aff = sigma_;
 }
 
 void Solver::sigmaCorrectors() {
-  if ((alpha_primal_ > 0.5 && alpha_dual_ > 0.5) || iter_ == 1) {
-    sigma_ = 0.01;
-  } else if (alpha_primal_ > 0.2 && alpha_dual_ > 0.2) {
-    sigma_ = 0.1;
-  } else if (alpha_primal_ > 0.1 && alpha_dual_ > 0.1) {
-    sigma_ = 0.25;
-  } else if (alpha_primal_ > 0.05 && alpha_dual_ > 0.05) {
-    sigma_ = 0.5;
-  } else {
-    sigma_ = 0.9;
-  }
+  sigma_ = sigmaFromStepsizes();
 
   it_->data.back().sigma = sigma_;
+}
+
+double Solver::sigmaFromStepsizes() const {
+  if ((alpha_primal_ > 0.5 && alpha_dual_ > 0.5) || iter_ == 1) return 0.01;
+  if (alpha_primal_ > 0.2 && alpha_dual_ > 0.2) return 0.1;
+  if (alpha_primal_ > 0.1 && alpha_dual_ > 0.1) return 0.25;
+  if (alpha_primal_ > 0.05 && alpha_dual_ > 0.05) return 0.5;
+  return 0.9;
 }
 
 void Solver::residualsMcc() {
