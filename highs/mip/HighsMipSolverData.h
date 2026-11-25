@@ -197,6 +197,12 @@ struct HighsMipSolverData {
   // Objective value from which to compute the upper limits, given that
   // solobj may not be attained in the reduced space
   double upperLimitObjective(const double solobj, const bool attained) const;
+  // Map a solution of the original model into the reduced space. The
+  // image is left empty unless presolve has run to completion. Returns
+  // whether the image is feasible in the reduced space, and then its
+  // objective value (without offset) in image_solobj
+  bool reducedSpaceImage(const std::vector<double>& solution,
+                         std::vector<double>& image, double& image_solobj);
   bool moreHeuristicsAllowed() const;
   void removeFixedIndices();
   void init();
@@ -232,6 +238,14 @@ struct HighsMipSolverData {
                     const int solution_source,
                     const bool print_display_line = true,
                     const bool is_user_solution = false);
+  // Update the upper bound, limits and dependent data given a solution
+  // with objective value solobj below the upper bound. If it is not
+  // attained in the reduced space, the solution must still be feasible in
+  // the original space
+  void updateUpperBound(const double solobj, const int solution_source,
+                        const bool print_display_line,
+                        const bool is_user_solution,
+                        const bool attained = true);
 
   const std::vector<double>& getSolution() const;
 
