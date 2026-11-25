@@ -544,7 +544,8 @@ HighsStatus solveHipo(const HighsOptions& options, HighsTimer& timer,
     assert(Q.empty());
     HighsStatus ipx_status =
         solveLpIpx(options, timer, lp, highs_basis, highs_solution,
-                   model_status, highs_info, callback);
+                   model_status, highs_info, callback,
+                   reference_objective_offset);
     HighsModelStatus ipx_model_status = model_status;
     if (ipx_model_status == HighsModelStatus::kOptimal && !highs_basis.valid) {
       // Without a basis, HiGHS accepts the solution only if it passes a KKT
@@ -553,7 +554,8 @@ HighsStatus solveHipo(const HighsOptions& options, HighsTimer& timer,
       check_options.output_flag = false;
       HighsInfo check_info;
       lpNoBasisKktCheck(ipx_model_status, check_info, lp, highs_solution,
-                        check_options, "After IPX");
+                        check_options, "After IPX",
+                        reference_objective_offset);
     }
     if (ipx_model_status != HighsModelStatus::kUnknown &&
         ipx_model_status != HighsModelStatus::kSolveError)
@@ -566,7 +568,8 @@ HighsStatus solveHipo(const HighsOptions& options, HighsTimer& timer,
     HighsOptions hipo_options = options;
     hipo_options.solver = kHipoString;
     return solveHipo(hipo_options, timer, lp, Q, highs_basis, highs_solution,
-                     model_status, highs_info, callback);
+                     model_status, highs_info, callback,
+                     reference_objective_offset);
   }
 
   // const bool report_solve_data =

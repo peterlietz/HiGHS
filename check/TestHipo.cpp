@@ -1047,3 +1047,54 @@ TEST_CASE("test-hipo-network-ipx", "[highs_hipo]") {
   REQUIRE(log_text.find("IPX model has") != std::string::npos);
   highs.resetThreadScheduler(true);
 }
+
+TEST_CASE("test-hipo-network-ipx-dominant-offset", "[highs_hipo]") {
+  // The network LP of test-hipo-network-ipx, which solver = "ipm" leaves to
+  // IPX, with an objective constant of 1e4 times the optimal c'x. IPX must
+  // be given the LP's offset less the incumbent model's, as when solver =
+  // "ipx": with the whole offset, its gap test is lenient by the offset, and
+  // HiGHS's final check, which judges the objectives without the offset,
+  // rejects its point (Unknown)
+  std::string log_text;
+  Highs highs;
+  highs.setOptionValue("output_flag", true);
+  highs.setOptionValue("log_to_console", dev_run);
+  highs.setCallback(
+      [](int callback_type, const std::string& message,
+         const HighsCallbackOutput*, HighsCallbackInput*, void* user_data) {
+        if (callback_type == kCallbackLogging)
+          *static_cast<std::string*>(user_data) += message;
+      },
+      &log_text);
+  highs.startCallback(kCallbackLogging);
+  HighsLp lp = randomNetworkLp(6000, 5, 1);
+  REQUIRE(highs.passModel(lp) == HighsStatus::kOk);
+  REQUIRE(highs.run() == HighsStatus::kOk);
+  REQUIRE(highs.getModelStatus() == HighsModelStatus::kOptimal);
+  const double objective = highs.getInfo().objective_function_value;
+  lp.offset_ = 1e4 * std::fabs(objective);
+
+  highs.setOptionValue("run_crossover", kHighsOffString);
+  for (const std::string presolve : {kHighsOffString, kHighsOnString}) {
+    for (const std::string solver : {kIpxString, kIpmString}) {
+      log_text.clear();
+      highs.setOptionValue("presolve", presolve);
+      highs.setOptionValue("solver", solver);
+      REQUIRE(highs.passModel(lp) == HighsStatus::kOk);
+      highs.run();
+      INFO("presolve " << presolve << ", solver " << solver << ", error "
+                       << highs.getInfo().objective_function_value -
+                              (objective + lp.offset_)
+                       << ", P-D error "
+                       << highs.getInfo().primal_dual_objective_error);
+      if (solver == kIpmString)
+        REQUIRE(log_text.find("solving it with IPX instead") !=
+                std::string::npos);
+      REQUIRE(highs.getModelStatus() == HighsModelStatus::kOptimal);
+      CHECK(std::fabs(highs.getInfo().objective_function_value -
+                      (objective + lp.offset_)) <=
+            1e-6 * std::fabs(objective));
+    }
+  }
+  highs.resetThreadScheduler(true);
+}
