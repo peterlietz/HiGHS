@@ -1028,8 +1028,11 @@ void HighsMipSolverData::checkAddSolution(const bool from_cleanup_solve) {
         // Record the previous saved objective to check for changes
         const double previous_mipsolver_solution_objective =
             mipsolver.solution_objective_;
+        // Both objective values are in the original space, so compare
+        // them with the original sense: presolve turns a maximization
+        // into a minimization, so mipsolver.model_ minimizes
         const bool new_solution_better =
-            mipsolver.model_->sense_ == ObjSense::kMinimize
+            mipsolver.orig_model_->sense_ == ObjSense::kMinimize
                 ? (original_space_objective_value <
                    mipsolver.solution_objective_)
                 : (original_space_objective_value >

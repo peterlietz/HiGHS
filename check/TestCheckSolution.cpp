@@ -1016,3 +1016,50 @@ TEST_CASE("issue-3642", "[highs_test_mip_solver]") {
 
   h.resetGlobalScheduler(true);
 }
+
+TEST_CASE("mip-start-image-worse-maximize", "[highs_test_mip_solver]") {
+  // Presolve fixes z = 0, since y is parallel to it and more
+  // profitable. The image of the start (z = 1) in the reduced space is
+  // feasible, but its postsolved objective (23) is worse than that of
+  // the start (25), so the start must be kept. Presolve turns the
+  // maximization into a minimization, so comparing the objectives in
+  // the original space with the sense of the reduced model took the
+  // worse image instead. With no nodes allowed, the MIP solver then
+  // returned it
+  //
+  //   max 10a + 13b + 7c + 8d + 3y + 2z
+  //   5a + 7b + 4c + 5d + 3y + 3z <= 15
+  //   2a + 3b + 5c + 4d + 2y + 2z <= 9
+  //   a, b, c, d, z binary, y integer in [0, 10]
+  HighsLp lp;
+  lp.num_col_ = 6;
+  lp.num_row_ = 2;
+  lp.sense_ = ObjSense::kMaximize;
+  lp.col_cost_ = {10, 13, 7, 8, 3, 2};
+  lp.col_lower_.assign(6, 0);
+  lp.col_upper_ = {1, 1, 1, 1, 10, 1};
+  lp.integrality_.assign(6, HighsVarType::kInteger);
+  lp.row_lower_ = {-kHighsInf, -kHighsInf};
+  lp.row_upper_ = {15, 9};
+  lp.a_matrix_.format_ = MatrixFormat::kRowwise;
+  lp.a_matrix_.start_ = {0, 6, 12};
+  lp.a_matrix_.index_ = {0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5};
+  lp.a_matrix_.value_ = {5, 7, 4, 5, 3, 3, 2, 3, 5, 4, 2, 2};
+  const std::vector<double> start = {1, 1, 0, 0, 0, 1};
+  const double start_objective = 25;
+
+  Highs h;
+  h.setOptionValue("output_flag", dev_run);
+  h.setOptionValue("mip_max_nodes", 0);
+  REQUIRE(h.passModel(lp) == HighsStatus::kOk);
+  REQUIRE(h.getLp().objectiveValue(start) == start_objective);
+  HighsSolution solution;
+  solution.col_value = start;
+  solution.value_valid = true;
+  REQUIRE(h.setSolution(solution) == HighsStatus::kOk);
+  h.run();
+  REQUIRE(h.getSolution().value_valid);
+  REQUIRE(h.getInfo().objective_function_value >= start_objective);
+  REQUIRE(h.getLp().objectiveValue(h.getSolution().col_value) >=
+          start_objective);
+}
