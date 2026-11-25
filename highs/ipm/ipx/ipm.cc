@@ -51,18 +51,29 @@ void IPM::Driver(KKTSolver* kkt, Iterate* iterate, Info* info) {
     iterate_ = iterate;
     info_ = info;
     num_bad_iter_ = 0;
+    num_stagnant_iter_ = 0;
 
     while (true) {
         if (iterate->term_crit_reached()) {
             info->status_ipm = IPX_STATUS_optimal;
             break;
         }
-        if (num_bad_iter_ >= 5 ||
-            (best_complementarity_ > 0.0 &&
-            iterate_->complementarity() > kDivergeTol * best_complementarity_)) {
+        const bool diverged = best_complementarity_ > 0.0 &&
+            iterate_->complementarity() > kDivergeTol * best_complementarity_;
+        // A run of bad iterations is a stall unless its short steps are
+        // rebalancing the iterate (see MakeStep()), which is tolerated for at
+        // most kMaxBadRun iterations.
+        const bool stalled = num_bad_iter_ >= kMaxBadIter &&
+            (!tolerate_rebalancing_ || num_stagnant_iter_ >= kMaxBadIter ||
+             num_bad_iter_ >= kMaxBadRun);
+        // The infeasibility tests below are made when the IPM stops, and when
+        // a run of bad iterations reaches kMaxBadIter, so that an infeasible
+        // model is detected at the same iteration as without rebalancing.
+        if (diverged || stalled || num_bad_iter_ == kMaxBadIter) {
             // No progress in reducing the complementarity gap.
             // Check if model seems to be primal or dual infeasible.
             bool dualized = iterate_->model().dualized();
+            bool stop = true;
             double pobjective = iterate_->pobjective_after_postproc();
             double dobjective = iterate_->dobjective_after_postproc();
             if (iterate_->presidual() > iterate_->feasibility_tol() * (1.0 + model.norm_bounds()) &&
@@ -78,10 +89,15 @@ void IPM::Driver(KKTSolver* kkt, Iterate* iterate, Info* info) {
                 info->status_ipm = dualized ?
                     IPX_STATUS_primal_infeas : IPX_STATUS_dual_infeas;
             }
-            else {
+            else if (diverged || stalled) {
                 info->status_ipm = IPX_STATUS_no_progress;
             }
-            break;
+            else {
+                // The short steps are rebalancing the iterate; carry on.
+                stop = false;
+            }
+            if (stop)
+                break;
         }
         if (info->iter >= maxiter_) {
             info->status_ipm = IPX_STATUS_iter_limit;
@@ -697,10 +713,11 @@ void IPM::MakeStep(const Step& step, bool isCentring) {
     const double presidual = iterate_->presidual();
     const double dresidual = iterate_->dresidual();
     const double complementarity = iterate_->complementarity();
+    const double mu = iterate_->mu();
     const double objective_gap = std::abs(
         iterate_->pobjective_after_postproc() -
         iterate_->dobjective_after_postproc());
-    
+
     iterate_->Update(step_primal_, &step.x[0], &step.xl[0], &step.xu[0],
                      step_dual_,   &step.y[0], &step.zl[0], &step.zu[0]);
     if (!isCentring){
@@ -751,12 +768,64 @@ void IPM::MakeStep(const Step& step, bool isCentring) {
                    rounding_gap_ratio * new_objective_gap
             && new_objective_gap > reduction_thresh * objective_gap;
 
-        if (std::min(step_primal_, step_dual_) < 0.05 ||
+        const bool short_step = std::min(step_primal_, step_dual_) < 0.05;
+        const bool stalled =
             presidual_stalled || dresidual_stalled ||
-            complementarity_stalled || objective_gap_stalled)
+            complementarity_stalled || objective_gap_stalled;
+
+        // Short steps occur when the residuals are large compared with mu:
+        // the iterate is then outside the neighbourhood of the central path
+        // in which an infeasible IPM can take long steps, for example right
+        // after the switch to the main IPM. A short step that reduces each
+        // residual that is not yet within tolerance, both in absolute terms
+        // and by a larger factor than mu, moves the iterate back into that
+        // neighbourhood. Such a rebalancing step is not a sign of
+        // stagnation, so it is not counted in num_stagnant_iter_.
+        //
+        // A residual/mu ratio can fall because mu grows while the residual
+        // stays put (steps of 1e-10, say), so each residual above tolerance
+        // must fall by at least the factor 1-kMinRebalanceDecrease in the
+        // step, and by at least that factor per bad iteration since the
+        // start of the run of bad iterations. The latter also stops a run in
+        // which the residuals grow in the non-rebalancing steps.
+        const double pres_tol = tol * (1.0+model.norm_bounds());
+        const double dres_tol = tol * (1.0+model.norm_c());
+        const double presidual_new = iterate_->presidual();
+        const double dresidual_new = iterate_->dresidual();
+        const double mu_new = iterate_->mu();
+        if (num_bad_iter_ == 0) {
+            run_presidual_ = presidual;
+            run_dresidual_ = dresidual;
+        }
+        bool rebalancing = false;
+        if (short_step && !stalled &&
+            (presidual > pres_tol || dresidual > dres_tol)) {
+            const double step_factor = 1.0 - kMinRebalanceDecrease;
+            const double run_factor = std::pow(step_factor, num_bad_iter_+1);
+            // A residual within tolerance before the step must stay within
+            // tolerance; one above tolerance must fall in the step, faster
+            // than mu, and over the run. residual/mu decreases iff
+            // new_residual*mu < residual*mu_new.
+            auto reduced = [&](double res, double res_new, double res_run,
+                               double res_tol) {
+                if (res <= res_tol)
+                    return res_new <= res_tol;
+                return res_new <= step_factor * res &&
+                    res_new * mu < res * mu_new &&
+                    res_new <= std::max(res_tol, run_factor * res_run);
+            };
+            rebalancing =
+                reduced(presidual, presidual_new, run_presidual_, pres_tol) &&
+                reduced(dresidual, dresidual_new, run_dresidual_, dres_tol);
+        }
+        if (short_step || stalled) {
             num_bad_iter_++;
-        else
+            if (!rebalancing)
+                num_stagnant_iter_++;
+        } else {
             num_bad_iter_ = 0;
+            num_stagnant_iter_ = 0;
+        }
         best_complementarity_ =
             std::min(best_complementarity_, iterate_->complementarity());
     }

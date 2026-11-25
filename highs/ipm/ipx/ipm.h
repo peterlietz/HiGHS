@@ -37,6 +37,10 @@ public:
 
     Int maxiter() const { return maxiter_; }
     void maxiter(Int i) { maxiter_ = i; }
+    // If true, Driver() does not count rebalancing steps (see MakeStep())
+    // when deciding that the IPM makes no progress. This is set for the main
+    // IPM, where IPX_STATUS_no_progress ends the solve.
+    void tolerate_rebalancing(bool b) { tolerate_rebalancing_ = b; }
     void PrintHeader();
 
 private:
@@ -45,6 +49,16 @@ private:
     // exceeds kDivergeTol times the smallest complementarity gap of all
     // iterates so far.
     static constexpr double kDivergeTol = 1e6;
+    // IPM terminates with no progress after kMaxBadIter bad iterations in a
+    // row. If rebalancing steps are tolerated, only those bad iterations that
+    // are not rebalancing steps count, and kMaxBadRun bad iterations in a row
+    // of any kind end the IPM (a safety net that guarantees termination).
+    static constexpr Int kMaxBadIter = 5;
+    static constexpr Int kMaxBadRun = 25;
+    // A rebalancing step reduces each residual above tolerance at least by
+    // the factor 1-kMinRebalanceDecrease, and so does each bad iteration on
+    // average over the run of bad iterations (see MakeStep()).
+    static constexpr double kMinRebalanceDecrease = 1e-3;
 
     void ComputeStartingPoint();
     void Predictor(Step& step);
@@ -77,8 +91,16 @@ private:
 
     double step_primal_{0.0}, step_dual_{0.0};
     // Counts the # bad iterations since the last good iteration. An iteration
-    // is bad if the primal or dual step size is < 0.05.
+    // is bad if the primal or dual step size is < 0.05, or if it stalls (see
+    // MakeStep()).
     Int num_bad_iter_{0};
+    // Counts the # bad iterations since the last good iteration that are not
+    // rebalancing steps.
+    Int num_stagnant_iter_{0};
+    // Primal and dual residuals before the first iteration of the current
+    // run of bad iterations.
+    double run_presidual_{0.0}, run_dresidual_{0.0};
+    bool tolerate_rebalancing_{false};
     // Smallest complementarity gap of all iterates so far.
     double best_complementarity_{0.0};
 
