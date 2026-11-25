@@ -792,6 +792,9 @@ TEST_CASE("hipo-large-model-offset", "[highs_hipo]") {
     requireOptimalWithinTolerance(h);
     REQUIRE(h.getInfo().ipm_iteration_count < 100);
   }
+  h.resetThreadScheduler(true);
+}
+
 TEST_CASE("test-hipo-inf-iterate", "[highs_hipo]") {
   // min   1e19 x + y
   // s.t.  x + y >= 1
@@ -1100,6 +1103,7 @@ TEST_CASE("hipo-factor-dynamic-regularisation-recorded", "[highs_hipo]") {
   // a + e + 1e-12 rounds to a + e, and the second pivot is regularised
   REQUIRE(std::min(reg[0], reg[1]) == 0.0);
   REQUIRE(std::abs(std::max(reg[0], reg[1]) - thresh) <= 1e-15 * a);
+}
 
 // Random min-cost flow on num_node nodes: a cycle of uncapacitated arcs (so
 // that it is feasible) and degree * num_node random capacitated arcs. The

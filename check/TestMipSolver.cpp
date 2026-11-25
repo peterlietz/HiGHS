@@ -3032,6 +3032,9 @@ TEST_CASE("mip-restart-root-ipm", "[highs_test_mip_solver]") {
     for (HighsInt k = 1; k < num_k; k++)
       REQUIRE(std::fabs(objective[0] - objective[k]) <=
               1e-6 * (1 + std::fabs(objective[0])));
+  }
+}
+
 TEST_CASE("mip-root-restart-first", "[highs_test_mip_solver]") {
   // On these models, root separation stops for a restart (stall = -1).
   // With mip_root_restart_first, the expensive root heuristics are then

@@ -195,6 +195,9 @@ TEST_CASE("ipx-fixed-column-gap", "[highs_ipx]") {
     REQUIRE(h.getInfo().primal_dual_objective_error <= optimality_tolerance);
     REQUIRE(std::fabs(h.getInfo().objective_function_value) < 1e-3);
     h.resetThreadScheduler(true);
+  }
+}
+
 TEST_CASE("ipx-stall-cancelling-constant", "[highs_ipx]") {
   // A balanced transportation LP (5 supplies of about 4e7, 8 demands) whose
   // objective constant -59861304428 cancels the optimal c'x, so that the
@@ -218,6 +221,7 @@ TEST_CASE("ipx-stall-cancelling-constant", "[highs_ipx]") {
     REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
     REQUIRE(h.getInfo().ipm_iteration_count < 100);
   }
+}
 
 // Runs IPX's main IPM on a Netlib LP from the starting point x = x0 (within
 // the bounds), y = 0 and complementarity products mu, whose residuals are
