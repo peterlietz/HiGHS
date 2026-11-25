@@ -2907,3 +2907,49 @@ TEST_CASE("issue-3768", "[highs_test_mip_solver]") {
   REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
   h.resetThreadScheduler(true);
 }
+
+// Solve the model with the start solution, presolve on, and check
+// that the solver reaches the optimal objective value, and that this
+// is the objective value of the solution returned
+static void testStartSolution(Highs& h, const double optimal_objective) {
+  REQUIRE(h.run() == HighsStatus::kOk);
+  REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
+  const double objective = h.getObjectiveValue();
+  REQUIRE(std::fabs(objective - optimal_objective) <=
+          1e-6 * (1 + std::fabs(optimal_objective)));
+  REQUIRE(std::fabs(h.getLp().objectiveValue(h.getSolution().col_value) -
+                    objective) <= 1e-6 * (1 + std::fabs(objective)));
+}
+
+TEST_CASE("mip-start-cut-off-empty-reduced-objective",
+          "[highs_test_mip_solver]") {
+  // Columns y and z are parallel, and z has the higher cost, so
+  // presolve fixes z = 0, and the reduced objective is empty. The start
+  // has z = 1, so its objective value 0.3 is not attained in the reduced
+  // space. Before checkObjIntegrality, an empty objective is integral
+  // with scale 1, so the upper limit must be computed from the start's
+  // objective rounded up to 1, rather than cutting off the optimum 0
+  HighsLp lp;
+  lp.num_col_ = 6;
+  lp.num_row_ = 3;
+  lp.col_cost_ = {0, 0, 0, 0, 0, 0.3};
+  lp.col_lower_.assign(6, 0);
+  lp.col_upper_ = {20, 20, 20, 20, inf, 1};
+  lp.integrality_.assign(6, HighsVarType::kInteger);
+  lp.row_lower_ = {98, -inf, 20};
+  lp.row_upper_ = {98, 60, inf};
+  lp.a_matrix_.format_ = MatrixFormat::kRowwise;
+  lp.a_matrix_.start_ = {0, 6, 10, 14};
+  lp.a_matrix_.index_ = {0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 0, 1, 2, 3};
+  lp.a_matrix_.value_ = {3, 5, 7, 11, 2, 2, 2, 3, 4, 5, 4, 2, 3, 6};
+  HighsSolution start;
+  start.col_value = {2, 0, 5, 5, 0, 1};
+  start.value_valid = true;
+  Highs h;
+  h.setOptionValue("output_flag", dev_run);
+  REQUIRE(h.passModel(lp) == HighsStatus::kOk);
+  REQUIRE(h.setSolution(start) == HighsStatus::kOk);
+  testStartSolution(h, 0);
+
+  h.resetGlobalScheduler(true);
+}
