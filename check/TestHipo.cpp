@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <vector>
 
@@ -291,6 +292,156 @@ TEST_CASE("test-hipo-ordering-stop", "[highs_hipo]") {
                           0) != 0);
   REQUIRE(FH.reorderAmd(n, nz, rows.data(), ptr.data(), perm.data(), false) !=
           0);
+}
+
+// Balanced transportation LP: supply[i] from row i, demand[j] from row
+// num_supply + j, cost[i * num_demand + j] for the flow from i to j
+static HighsLp transportationLp(const std::vector<double>& supply,
+                                const std::vector<double>& demand,
+                                const std::vector<double>& cost) {
+  const HighsInt num_supply = supply.size();
+  const HighsInt num_demand = demand.size();
+  HighsLp lp;
+  lp.num_col_ = num_supply * num_demand;
+  lp.num_row_ = num_supply + num_demand;
+  lp.col_cost_ = cost;
+  lp.col_lower_.assign(lp.num_col_, 0);
+  lp.col_upper_.assign(lp.num_col_, kHighsInf);
+  lp.row_lower_ = supply;
+  lp.row_lower_.insert(lp.row_lower_.end(), demand.begin(), demand.end());
+  lp.row_upper_ = lp.row_lower_;
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0};
+  for (HighsInt i = 0; i < num_supply; ++i) {
+    for (HighsInt j = 0; j < num_demand; ++j) {
+      lp.a_matrix_.index_.push_back(i);
+      lp.a_matrix_.index_.push_back(num_supply + j);
+      lp.a_matrix_.value_.push_back(1);
+      lp.a_matrix_.value_.push_back(1);
+      lp.a_matrix_.start_.push_back(lp.a_matrix_.index_.size());
+    }
+  }
+  return lp;
+}
+
+static void solveWithHipo(Highs& h, const HighsLp& lp,
+                          const std::string& presolve = kHighsOffString) {
+  h.setOptionValue("output_flag", dev_run);
+  REQUIRE(h.passModel(lp) == HighsStatus::kOk);
+  h.setOptionValue("solver", kHipoString);
+  h.setOptionValue("run_crossover", kHighsOffString);
+  h.setOptionValue("presolve", presolve);
+  h.run();
+}
+
+static void requireOptimalWithinTolerance(Highs& h) {
+  REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
+  double optimality_tolerance;
+  h.getOptionValue("optimality_tolerance", optimality_tolerance);
+  REQUIRE(h.getInfo().primal_dual_objective_error <= optimality_tolerance);
+}
+
+static HighsLp issue3715Lp() {
+  return transportationLp({7267, 14623, 6263}, {7615, 5870, 6327, 8341},
+                          {9, 4, 7, 1, 8, 8, 8, 7, 8, 4, 7, 2});
+}
+
+TEST_CASE("hipo-issue-3715", "[highs_hipo]") {
+  // The objective constant cancels c'x at the optimum, so HiPO's gap,
+  // normalised without the offset, used to stop with HiGHS's P-D objective
+  // error at 82.6 times optimality_tolerance
+  HighsLp lp = issue3715Lp();
+  lp.offset_ = -147155;
+  for (const std::string presolve : {kHighsOffString, kHighsOnString}) {
+    Highs h;
+    solveWithHipo(h, lp, presolve);
+    requireOptimalWithinTolerance(h);
+    h.resetThreadScheduler(true);
+  }
+}
+
+TEST_CASE("hipo-presolve-offset", "[highs_hipo]") {
+  // The constant of hipo-issue-3715 written as a column fixed at 1, so that
+  // presolve creates the offset: the presolved LP's offset-free objectives
+  // are large while the original model's are about 0. HiPO's stop check must
+  // judge the point against the original model's objectives, as HiGHS's
+  // final check after postsolve does (else: Unknown, P-D objective error
+  // 7.6e-4). Also as a maximisation, where the presolved LP is in the
+  // opposite sense to the model. The model has an offset of its own, so that
+  // a reference offset with the wrong sign is noticed
+  for (const bool maximise : {false, true}) {
+    HighsLp lp = issue3715Lp();
+    lp.col_cost_.push_back(-147155);
+    lp.col_lower_.push_back(1);
+    lp.col_upper_.push_back(1);
+    lp.a_matrix_.start_.push_back(lp.a_matrix_.index_.size());
+    lp.num_col_++;
+    lp.offset_ = -1e5;
+    if (maximise) {
+      for (double& cost : lp.col_cost_) cost = -cost;
+      lp.offset_ = -lp.offset_;
+      lp.sense_ = ObjSense::kMaximize;
+    }
+    for (const std::string presolve : {kHighsOnString, kHighsOffString}) {
+      Highs h;
+      solveWithHipo(h, lp, presolve);
+      requireOptimalWithinTolerance(h);
+      REQUIRE(std::fabs(h.getInfo().objective_function_value - lp.offset_) <
+              1e-3);
+      h.resetThreadScheduler(true);
+    }
+  }
+}
+
+TEST_CASE("hipo-large-model-offset", "[highs_hipo]") {
+  // Flows of about 3e8 and an offset in the model that cancels c'x: HiPO
+  // must not iterate for an accuracy it cannot reach
+  //
+  // splitmix64: integer only, so that the model is the same on every platform
+  uint64_t state = 10;
+  auto next = [&state]() {
+    uint64_t z = (state += 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
+  };
+  const HighsInt num_supply = 5, num_demand = 8;
+  const int64_t scale = 300000000;
+  std::vector<double> supply, demand, cost;
+  int64_t total = 0;
+  for (HighsInt i = 0; i < num_supply; ++i) {
+    const int64_t value = scale + int64_t(next() % scale);
+    supply.push_back(double(value));
+    total += value;
+  }
+  // Each of the first demands is at most total / num_demand, so the last
+  // one is positive
+  int64_t assigned = 0;
+  const int64_t share = total / num_demand;
+  for (HighsInt j = 0; j < num_demand; ++j) {
+    const int64_t value = j + 1 < num_demand
+                              ? share / 2 + int64_t(next() % (share / 2))
+                              : total - assigned;
+    demand.push_back(double(value));
+    assigned += value;
+  }
+  for (HighsInt k = 0; k < num_supply * num_demand; ++k)
+    cost.push_back(double(100 + next() % 900));
+  HighsLp lp = transportationLp(supply, demand, cost);
+
+  Highs h;
+  h.setOptionValue("output_flag", dev_run);
+  REQUIRE(h.passModel(lp) == HighsStatus::kOk);
+  REQUIRE(h.run() == HighsStatus::kOk);
+  REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
+  lp.offset_ = -h.getInfo().objective_function_value;
+
+  for (const std::string presolve : {kHighsOffString, kHighsOnString}) {
+    solveWithHipo(h, lp, presolve);
+    requireOptimalWithinTolerance(h);
+    REQUIRE(h.getInfo().ipm_iteration_count < 100);
+  }
+  h.resetThreadScheduler(true);
 }
 
 TEST_CASE("test-hipo-linear-solver", "[highs_hipo]") {

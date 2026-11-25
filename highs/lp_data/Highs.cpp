@@ -4675,6 +4675,10 @@ HighsStatus Highs::callSolveLp(HighsLp& lp, const std::string& message) {
   HighsLpSolverObject solver_object(lp, basis_, solution_, info_, ekk_instance_,
                                     callback_, options_, timer_);
   solver_object.setProfiling(this->profiling_);
+  // HiGHS assesses the solution on the incumbent model, whose offset differs
+  // from that of a presolved LP
+  solver_object.reference_objective_offset_ =
+      lp.sense_ == model_.lp_.sense_ ? model_.lp_.offset_ : -model_.lp_.offset_;
 
   // Solve the LP
   return_status = solveLp(solver_object, message);

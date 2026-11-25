@@ -49,6 +49,13 @@ class Solver {
   Logger logger_;
   double start_time_;
 
+  // Smallest relative violation of HiGHS's KKT tolerances in the checks of
+  // checkTerminationKkt, and the number of checks since it last decreased by
+  // kKktProgressFactor.
+  double kkt_best_violation_ = kHighsInf;
+  double reference_objective_offset_ = kHighsInf;
+  Int kkt_checks_without_progress_{};
+
   // Status of ipm iterations up to pd feas solution found (potentially using
   // ipx to refine, in which case the ipx status_ipm is converted to hipo
   // status).
@@ -79,6 +86,11 @@ class Solver {
   void setOptions(const HighsOptions& highs_options);
   void setCallback(HighsCallback& callback);
   void setTimer(const HighsTimer& timer);
+  // Objective offset of the model on which HiGHS finally assesses the
+  // solution (kHighsInf: that of the LP passed to HiPO)
+  void setReferenceObjectiveOffset(double offset) {
+    reference_objective_offset_ = offset;
+  }
 
   // ===================================================================================
   // Solve the LP or QP
@@ -289,7 +301,13 @@ class Solver {
   //  - relative dual gap    < tolerance
   // ===================================================================================
   shouldTerminate checkTermination();
-  isSuccess checkTerminationKkt();
+  // Run HiGHS's KKT check on the current iterate. If
+  // allow_tolerance_violation is true, accept any point that HiGHS rates
+  // optimal, that is, with no tolerance violated by more than the factor 100
+  // that HiGHS allows when it sets the final model status. Otherwise, require
+  // all KKT errors to be within tolerance, unless they have stopped
+  // decreasing over the last kKktChecksWithoutProgress checks.
+  isSuccess checkTerminationKkt(bool allow_tolerance_violation = false);
 
   // ===================================================================================
   // Check for user interrupt or time limit
