@@ -10,7 +10,9 @@
  */
 #include "pdhg.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <iostream>
 #include <random>
 #include <tuple>
@@ -519,6 +521,8 @@ void PDLPSolver::solve(std::vector<double>& x, std::vector<double>& y) {
                  // y_current
   best_primal_weight_ = primal_weight_;
   best_primal_dual_residual_gap_ = std::numeric_limits<double>::infinity();
+  stall_reference_gap_ = std::numeric_limits<double>::infinity();
+  stall_reference_iter_ = 0;
 
   // initialize internal solver state
   restart_scheme_.passParams(&params_);
@@ -671,6 +675,10 @@ void PDLPSolver::solve(std::vector<double>& x, std::vector<double>& y) {
         runConvergenceCheck(final_iter_count_, x, y, check_status);
     if (should_terminate) {
       termination_status = check_status;
+      break;
+    }
+    if (checkStall(final_iter_count_, results_)) {
+      termination_status = TerminationStatus::STALLED;
       break;
     }
 
@@ -918,6 +926,44 @@ bool PDLPSolver::runConvergenceCheck(size_t iter, std::vector<double>& output_x,
 
   results_ = current_results;
   return false;
+}
+
+// Returns true if PDLP has stalled with a primal and dual feasible iterate:
+// the relative objective gap has not been halved during the last 7/8 of the
+// iterations, after at least kStallMinIterations. This happens when rounding
+// errors in objectives whose terms are much larger than their value keep the
+// gap above the tolerance, for example when an objective constant cancels
+// c'x; further iterations would then run until the iteration or time limit.
+// Checks with an infeasible iterate are ignored: PDLP may need many
+// iterations to reduce the residuals.
+bool PDLPSolver::checkStall(const HighsInt iter, const SolverResults& results) {
+  const HighsInt kStallMinIterations = 100000;
+  const HighsInt kStallIterationFactor = 8;
+  const double kStallReductionFactor = 0.5;
+  // the feasibility tests of the termination test
+  const bool feasible =
+      results.primal_feasibility <
+          params_.primal_feasibility_tolerance * (1.0 + unscaled_rhs_norm_) &&
+      results.dual_feasibility <
+          params_.dual_feasibility_tolerance * (1.0 + unscaled_c_norm_);
+  if (!feasible) return false;
+  if (results.relative_obj_gap <
+      kStallReductionFactor * stall_reference_gap_) {
+    stall_reference_gap_ = results.relative_obj_gap;
+    stall_reference_iter_ = iter;
+    return false;
+  }
+  if (iter < kStallMinIterations ||
+      iter < kStallIterationFactor * stall_reference_iter_)
+    return false;
+  char message[160];
+  std::snprintf(message, sizeof(message),
+                "No progress: relative objective gap %.3g, not halved since "
+                "iteration %d",
+                results.relative_obj_gap,
+                static_cast<int>(stall_reference_iter_));
+  logger_.info(message);
+  return true;
 }
 
 bool PDLPSolver::checkRestartCriteria(double current_fpe, double initial_fpe,

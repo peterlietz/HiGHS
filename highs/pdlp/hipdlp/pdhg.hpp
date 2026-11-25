@@ -93,6 +93,8 @@ class PDLPSolver {
   // vectors when the solver stops without having converged
   void getLastIterate(std::vector<double>& output_x,
                       std::vector<double>& output_y);
+
+  bool checkStall(HighsInt iter, const SolverResults& results);
   bool checkRestartCriteria(double current_fpe, double initial_fpe,
                             double last_trial_fpe, int halpern_iteration,
                             int final_iter_count);
@@ -231,6 +233,11 @@ class PDLPSolver {
   double primal_weight_last_error_ = 0.0;
   double best_primal_dual_residual_gap_ =
       std::numeric_limits<double>::infinity();
+
+  // Stall detection: the relative objective gap of a feasible iterate at
+  // the last iteration where it was halved
+  double stall_reference_gap_ = std::numeric_limits<double>::infinity();
+  HighsInt stall_reference_iter_ = 0;
 
   HighsTimer* highs_timer_p_;
   HighsCallback* highs_callback_p_ = nullptr;

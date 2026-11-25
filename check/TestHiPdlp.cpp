@@ -201,3 +201,26 @@ TEST_CASE("hi-pdlp-all-free-rows", "[hipdlp]") {
 
   h.resetThreadScheduler(true);
 }
+
+TEST_CASE("hi-pdlp-stall-cancelling-constant", "[hipdlp]") {
+  // A balanced transportation LP (5 supplies of about 4e7, 8 demands) whose
+  // objective constant -59861304428 cancels the optimal c'x, so that the
+  // optimum is 0. HiPDLP's iterate becomes primal and dual feasible, but
+  // the objectives' terms are about 6e10, so their rounding errors keep its
+  // relative gap far above the tolerance. It used to iterate until the
+  // iteration or time limit; now it stops when the gap of a feasible
+  // iterate has not been halved during 7/8 of the iterations
+  const std::string model_file =
+      std::string(HIGHS_DIR) + "/check/instances/cancelling-constant.mps";
+  Highs h;
+  h.setOptionValue("output_flag", dev_run);
+  h.setOptionValue("solver", kHiPdlpString);
+  h.setOptionValue("pdlp_iteration_limit", 10000000);
+  REQUIRE(h.readModel(model_file) == HighsStatus::kOk);
+  h.run();
+  const HighsModelStatus model_status = h.getModelStatus();
+  REQUIRE((model_status == HighsModelStatus::kOptimal ||
+           model_status == HighsModelStatus::kUnknown));
+  REQUIRE(h.getInfo().pdlp_iteration_count < 1000000);
+  h.resetThreadScheduler(true);
+}
