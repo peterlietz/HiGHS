@@ -19,6 +19,20 @@ v = solver.NumVar(0, 4, "x")
 solver.Minimize(-v)
 assert solver.Solve() == solver.OPTIMAL
 assert abs(solver.Objective().Value() + 4) < 1e-6
+
+# A MIP that runs symmetry detection as a task on highspy's worker threads:
+# if highspy's scheduler symbols were bound to OR-Tools' HiGHS, its workers
+# would run highspy's tasks with the other version's code (issue 3797)
+h = highspy.Highs()
+h.setOptionValue("output_flag", False)
+items, bins = range(30), range(10)
+y = {(i, b): h.addBinary() for i in items for b in bins}
+for i in items:
+    h.addConstr(sum(y[i, b] for b in bins) == 1)
+for b in bins:
+    h.addConstr(sum((7 + i % 5) * y[i, b] for i in items) <= 30)
+h.minimize(sum(b * y[i, b] for i in items for b in bins))
+assert h.getModelStatus() == highspy.HighsModelStatus.kOptimal
 """
 
 
