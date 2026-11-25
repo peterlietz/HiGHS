@@ -112,6 +112,41 @@ struct Iterate {
   void dualInfeasUnscaled();
   double infeasAfterDropping() const;
 
+  // ===================================================================================
+  // Quality of the iterate as a certificate of infeasibility, for the problem
+  //   min c^T x + 1/2 x^T Q x  s.t.  A x = b, l <= x <= u
+  // (Q = 0 for an LP).
+  //
+  // Primal infeasibility: let d = b^T y + l^T zl - u^T zu and
+  // r = A^T y + zl - zu. For any primal feasible x',
+  // d <= x'^T r <= sum_j |x'_j| |r_j|, whatever Q is. So
+  //   primalInfeasCertificate = d / sum_j (1 + |x_j|) |r_j|
+  // above 1 proves that no feasible point with |x'_j| <= 1 + |x_j| exists. If
+  // x itself is (nearly) feasible, the value is at most about 1.
+  //
+  // Dual infeasibility: x is the candidate ray. For any dual feasible
+  // (x', y', zl', zu'), that is A^T y' + zl' - zu' - Q x' = c with z' >= 0,
+  //   c^T x >= -sum_i |y'_i| |(Ax)_i| - sum_j zl'_j max(0,-x_j)
+  //            - sum_j zu'_j max(0, x_j) - sqrt(x'^T Q x') sqrt(x^T Q x)
+  // (Cauchy-Schwarz for the semidefinite Q). So
+  //   dualInfeasCertificate = -c^T x / (sum_i (1 + |y_i|) |(Ax)_i|
+  //                           + sum_j (1 + zl_j) max(0, -x_j)
+  //                           + sum_j (1 + zu_j) max(0, x_j)
+  //                           + sqrt((1 + x^T Q x) x^T Q x))
+  // above 1 proves that no dual feasible point with |y'_i| <= 1 + |y_i|,
+  // z' <= 1 + z and x'^T Q x' <= 1 + x^T Q x exists. The dual constraints
+  // depend on x' only through Q x', so x'^T Q x' is its natural size; the
+  // last term requires the ray to have Q x = 0.
+  //
+  // Free variables have artificial bounds in HiPO; neither certificate uses
+  // them (for them, zl and zu count as residual, and the ray is free).
+  //
+  // Both return 0 if any quantity is NaN or infinite, so that a numerically
+  // broken iterate is never accepted as a certificate.
+  // ===================================================================================
+  double primalInfeasCertificate() const;
+  double dualInfeasCertificate() const;
+
   // complementarity products
   void products();
 

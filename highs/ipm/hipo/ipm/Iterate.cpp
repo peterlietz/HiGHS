@@ -208,6 +208,70 @@ void Iterate::dualInfeasUnscaled() {
   dinf /= (1.0 + model.normUnscaledObj());
 }
 
+double Iterate::primalInfeasCertificate() const {
+  // Free variables have artificial bounds (see PreprocessFreeVars), which a
+  // certificate for the original problem cannot use: drop their terms from d
+  // and count their zl - zu as part of the residual r.
+  std::vector<bool> is_free(model.n(), false);
+  for (Int i : model.freeVars()) is_free[i] = true;
+
+  // d = b^T y + l^T zl - u^T zu
+  double d = dotProd(y, model.b());
+  for (Int i = 0; i < model.n(); ++i) {
+    if (is_free[i]) continue;
+    if (model.hasLb(i)) d += model.lb(i) * zl[i];
+    if (model.hasUb(i)) d -= model.ub(i) * zu[i];
+  }
+
+  // r = A^T y + zl - zu, or A^T y for a free variable
+  std::vector<double> r(model.n(), 0.0);
+  model.A().alphaProductPlusY(1.0, y, r, true);
+  double weighted = 0.0;
+  for (Int i = 0; i < model.n(); ++i) {
+    if (!is_free[i]) {
+      if (model.hasLb(i)) r[i] += zl[i];
+      if (model.hasUb(i)) r[i] -= zu[i];
+    }
+    weighted += (1.0 + std::abs(x[i])) * std::abs(r[i]);
+  }
+
+  // Fail closed: an iterate with overflowed or NaN entries certifies nothing
+  if (!std::isfinite(d) || !std::isfinite(weighted) || !(d > 0.0)) return 0.0;
+  return weighted > 0.0 ? d / weighted : kHighsInf;
+}
+
+double Iterate::dualInfeasCertificate() const {
+  std::vector<bool> is_free(model.n(), false);
+  for (Int i : model.freeVars()) is_free[i] = true;
+
+  // c^T x
+  const double p = dotProd(x, model.c());
+
+  double weighted = 0.0;
+  std::vector<double> ax(model.m(), 0.0);
+  model.A().alphaProductPlusY(1.0, x, ax);
+  for (Int i = 0; i < model.m(); ++i)
+    weighted += (1.0 + std::abs(y[i])) * std::abs(ax[i]);
+  for (Int i = 0; i < model.n(); ++i) {
+    // a ray must not move against a bound of the original problem
+    if (is_free[i]) continue;
+    if (model.hasLb(i) && x[i] < 0.0) weighted -= (1.0 + zl[i]) * x[i];
+    if (model.hasUb(i) && x[i] > 0.0) weighted += (1.0 + zu[i]) * x[i];
+  }
+  if (model.qp()) {
+    // a ray must also have Qx = 0; measure it by x^T Q x (Q is stored in
+    // minimisation form)
+    std::vector<double> qx(model.n(), 0.0);
+    model.Q().alphaProductPlusY(1.0, x, qx);
+    const double xqx = std::max(0.0, dotProd(x, qx));
+    weighted += std::sqrt((1.0 + xqx) * xqx);
+  }
+
+  // Fail closed: an iterate with overflowed or NaN entries certifies nothing
+  if (!std::isfinite(p) || !std::isfinite(weighted) || !(p < 0.0)) return 0.0;
+  return weighted > 0.0 ? -p / weighted : kHighsInf;
+}
+
 void Iterate::residual1234() {
   Clock clock;
 
