@@ -245,7 +245,11 @@ shouldTerminate Solver::prepareIter() {
 
   ++iter_;
 
-  model_.adjustFreeVars(it_->x, it_->xl, it_->xu, logger_);
+  if (model_.adjustFreeVars(it_->x, it_->xl, it_->xu, logger_)) {
+    // the bound residuals and mu of the moved bounds have changed
+    it_->residual1234();
+    it_->computeMu();
+  }
 
   it_->clearDir();
 
@@ -1021,6 +1025,14 @@ isFailure Solver::centralityCorrectors() {
   for (cor = 0; cor < info_.correctors; ++cor) {
     residualsMcc();
 
+    // The products at the trial point can overflow when the direction is
+    // huge (e.g. right after the artificial bounds of a free variable moved).
+    // The corrector is optional: keep the current direction.
+    if (it_->isResNan() || it_->isResInf()) {
+      logger_.printInfo("Corrector skipped, right-hand side is not finite\n");
+      break;
+    }
+
     NewtonDir corrector(m_, n_);
     if (solveNewtonSystem(corrector)) return true;
 
@@ -1129,6 +1141,27 @@ shouldTerminate Solver::checkIterate() {
 shouldTerminate Solver::checkStagnation() {
   std::stringstream log_stream;
   bool stagnation = it_->stagnation(log_stream);
+
+  // A long step reduces mu, and with it the gap of a feasible iterate. If
+  // the gap does not decrease over several long steps, it is made of rounding
+  // errors (e.g. in b'y for a large y along a ray of the optimal dual face),
+  // which further iterations cannot remove: mu then goes to zero, while the
+  // gap stays above the tolerance.
+  const bool feasible = it_->pinf < options_.feasibility_tol &&
+                        it_->dinf < options_.feasibility_tol;
+  if (feasible && std::min(alpha_primal_, alpha_dual_) >= kGapStallStep &&
+      it_->pdgap >= options_.optimality_tol &&
+      it_->pdgap > kGapStallReduction * it_->prev_pdgap_)
+    ++it_->gap_stall_iter_;
+  else
+    it_->gap_stall_iter_ = 0;
+  it_->prev_pdgap_ = it_->pdgap;
+  if (it_->gap_stall_iter_ >= kMaxBadIter) {
+    stagnation = true;
+    log_stream << "Gap not reduced by long steps, gap " << sci(it_->pdgap, 0, 1)
+               << ", mu " << sci(it_->mu, 0, 1) << "\n";
+  }
+
   logger_.printInfo(log_stream.str().c_str());
   return stagnation;
 }
@@ -1427,6 +1460,8 @@ isSuccess Solver::switchToMultifrontal() {
       it_->best_dinf_ = kHighsInf;
       it_->largest_dx_x_ = 0;
       it_->largest_dy_y_ = 0;
+      it_->gap_stall_iter_ = 0;
+      it_->prev_pdgap_ = kHighsInf;
       info_.error = kOk;
       switch_successful = true;
     }

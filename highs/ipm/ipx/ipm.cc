@@ -710,6 +710,9 @@ void IPM::MakeStep(const Step& step, bool isCentring) {
         // complementarity gap doesn't decrease although the step is long,
         // the iterate has stagnated (for example when rounding errors in
         // the objective prevent the optimality test from being satisfied).
+        // This includes a complementarity gap that stays zero because no
+        // barrier terms are left (all variables free, fixed or implied):
+        // then nothing but rounding errors can change the objective gap.
         const double large_step_thresh = 0.9;
         const double reduction_thresh = 0.9;
 
@@ -725,7 +728,7 @@ void IPM::MakeStep(const Step& step, bool isCentring) {
             && iterate_->dresidual() > tol * (1.0+model.norm_c());
         const bool complementarity_stalled =
             std::min(step_primal_, step_dual_) >= large_step_thresh 
-            && iterate_->complementarity() > reduction_thresh * complementarity;
+            && iterate_->complementarity() >= reduction_thresh * complementarity;
 
         if (std::min(step_primal_, step_dual_) < 0.05 ||
             presidual_stalled || dresidual_stalled || complementarity_stalled)
