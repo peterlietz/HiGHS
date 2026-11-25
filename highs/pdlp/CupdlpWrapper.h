@@ -95,7 +95,8 @@ HighsStatus solveLpCupdlp(const HighsOptions& options, HighsTimer& timer,
                           const HighsLp& lp, HighsBasis& highs_basis,
                           HighsSolution& highs_solution,
                           HighsModelStatus& model_status, HighsInfo& highs_info,
-                          HighsCallback& callback);
+                          HighsCallback& callback,
+                          const double reference_objective_offset = kHighsInf);
 int formulateLP_highs(const cupdlp_int local_log_level, const HighsLp& lp,
                       double** cost, int* nCols, int* nRows, int* nnz,
                       int* nEqs, int** csc_beg, int** csc_idx, double** csc_val,

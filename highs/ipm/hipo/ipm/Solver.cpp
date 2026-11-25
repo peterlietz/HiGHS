@@ -306,7 +306,7 @@ isFailure Solver::prepareIpx() {
 
   ipx_lps_.SetCallback(control_.callback());
 
-  Int load_status = model_.loadIntoIpx(ipx_lps_);
+  Int load_status = model_.loadIntoIpx(ipx_lps_, reference_objective_offset_);
 
   if (load_status) {
     logger_.printInfo("Error loading model into IPX\n");

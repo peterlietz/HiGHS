@@ -791,3 +791,106 @@ TEST_CASE("issue-3756", "[highs_lp_solver]") {
 
   h.resetThreadScheduler(true);
 }
+
+static HighsLp offsetTransportationLp(const double cost_shift,
+                                      const double offset) {
+  // The transportation LP of issue-3715, with every cost lowered by
+  // cost_shift and the given objective constant
+  const std::vector<double> supply = {7267, 14623, 6263};
+  const std::vector<double> demand = {7615, 5870, 6327, 8341};
+  const std::vector<double> cost = {9, 4, 7, 1, 8, 8, 8, 7, 8, 4, 7, 2};
+  HighsLp lp;
+  lp.num_col_ = 12;
+  lp.num_row_ = 7;
+  lp.offset_ = offset;
+  for (const double c : cost) lp.col_cost_.push_back(c - cost_shift);
+  lp.col_lower_.assign(lp.num_col_, 0);
+  lp.col_upper_.assign(lp.num_col_, kHighsInf);
+  lp.row_lower_ = supply;
+  lp.row_lower_.insert(lp.row_lower_.end(), demand.begin(), demand.end());
+  lp.row_upper_ = lp.row_lower_;
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0};
+  for (HighsInt i = 0; i < 3; ++i) {
+    for (HighsInt j = 0; j < 4; ++j) {
+      lp.a_matrix_.index_.push_back(i);
+      lp.a_matrix_.index_.push_back(3 + j);
+      lp.a_matrix_.value_.push_back(1);
+      lp.a_matrix_.value_.push_back(1);
+      lp.a_matrix_.start_.push_back(lp.a_matrix_.index_.size());
+    }
+  }
+  return lp;
+}
+
+TEST_CASE("lp-solver-reference-offset", "[highs_lp_solver]") {
+  // HiGHS's final check normalises the P-D objective error by the
+  // objectives of the incumbent model without its offset. IPX, cuPDLP and
+  // HiPDLP must judge their gap by the same measure:
+  // - the optimal c'x is 0 and the objective constant 1e6 dominates: they
+  //   used to normalise by about 2e6 and stop early (Unknown)
+  // - the same with a constant of 1e10: the constant also dominated the
+  //   objectives whose difference is the gap, so rounding made the gap 0
+  //   and IPX stopped with c'x = 3.1e-7, while HiGHS reported a P-D error of
+  //   0. So c'x itself is checked
+  // - the objective constant cancels the optimal c'x (issue-3715)
+  // Each as a minimisation and a maximisation, with presolve on and off,
+  // and with IPX dualizing the LP
+  struct Model {
+    HighsLp lp;
+    double optimal_cx;
+  };
+  const double shift = 147155.0 / 28153.0;
+  const std::vector<Model> models = {
+      {offsetTransportationLp(shift, 1e6), 0},
+      {offsetTransportationLp(shift, 1e10), 0},
+      {offsetTransportationLp(0, -147155), 147155}};
+  struct Run {
+    std::string solver;
+    HighsInt ipx_dualize_strategy;
+  };
+  const std::vector<Run> runs = {{kIpxString, kIpxDualizeStrategyOff},
+                                 {kIpxString, kIpxDualizeStrategyOn},
+                                 {kPdlpString, kIpxDualizeStrategyLukas},
+                                 {kHiPdlpString, kIpxDualizeStrategyLukas}};
+  for (const Model& model : models) {
+    HighsLp lp = model.lp;
+    for (const bool maximise : {false, true}) {
+      if (maximise) {
+        for (double& c : lp.col_cost_) c = -c;
+        lp.offset_ = -lp.offset_;
+        lp.sense_ = ObjSense::kMaximize;
+      }
+      for (const Run& run : runs) {
+        for (const std::string presolve : {kHighsOnString, kHighsOffString}) {
+          Highs h;
+          h.setOptionValue("output_flag", dev_run);
+          h.setOptionValue("solver", run.solver);
+          h.setOptionValue("presolve", presolve);
+          h.setOptionValue("run_crossover", kHighsOffString);
+          h.setOptionValue("ipx_dualize_strategy", run.ipx_dualize_strategy);
+          REQUIRE(h.passModel(lp) == HighsStatus::kOk);
+          h.run();
+          INFO("offset " << lp.offset_ << ", maximise " << maximise << ", "
+                         << run.solver << ", dualize "
+                         << run.ipx_dualize_strategy << ", presolve "
+                         << presolve);
+          REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
+          double optimality_tolerance;
+          h.getOptionValue("optimality_tolerance", optimality_tolerance);
+          REQUIRE(h.getInfo().primal_dual_objective_error <=
+                  optimality_tolerance);
+          // c'x of the minimisation, from the solution
+          double cx = 0;
+          for (HighsInt j = 0; j < lp.num_col_; ++j)
+            cx += model.lp.col_cost_[j] * h.getSolution().col_value[j];
+          const double cx_error = std::fabs(cx - model.optimal_cx);
+          if (dev_run) printf("c'x error %g\n", cx_error);
+          REQUIRE(cx_error <= optimality_tolerance *
+                                  (1 + std::fabs(model.optimal_cx)));
+          h.resetThreadScheduler(true);
+        }
+      }
+    }
+  }
+}
