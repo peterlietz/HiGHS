@@ -194,6 +194,9 @@ struct HighsMipSolverData {
 
   double computeNewUpperLimit(double upper_bound, double mip_abs_gap,
                               double mip_rel_gap) const;
+  // Objective value from which to compute the upper limits, given that
+  // solobj may not be attained in the reduced space
+  double upperLimitObjective(const double solobj, const bool attained) const;
   bool moreHeuristicsAllowed() const;
   void removeFixedIndices();
   void init();
