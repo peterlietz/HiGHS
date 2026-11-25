@@ -95,3 +95,103 @@ TEST_CASE("test-ipx", "[highs_ipx]") {
   Highs h;
   h.resetThreadScheduler(true);
 }
+
+TEST_CASE("ipx-no-progress-crossover", "[highs_ipx]") {
+  // A network flow LP whose optimum is the offset 4.8e-10, reduced from the
+  // root relaxation of a MIP. Its only cost is 465 on an empty column with
+  // bounds [0, 1]. IPX reaches an iterate with residuals of 1e-15 and an
+  // optimal primal objective, but its dual objective keeps alternating
+  // between -2.8e-7 and 2.4e-7, so the gap stays above ipm_optimality_tol
+  // and the IPM ends with no progress. IPX used to return without
+  // crossover then, and HiGHS solved the LP again from scratch by simplex
+  // (8 iterations here; more than an hour on the unreduced LP). Now the
+  // iterate is declared imprecise, and crossover starts from it.
+  HighsLp lp;
+  lp.num_col_ = 14;
+  lp.num_row_ = 11;
+  lp.offset_ = 4.8423043352840978e-10;
+  lp.col_cost_ = {0, 0, 0, 465, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  lp.col_lower_.assign(lp.num_col_, 0);
+  lp.col_upper_ = {19, 19, 19, 1, 10, 10, 10, 10, 10, 10, 10, 10, 1, 1};
+  lp.row_lower_ = {-17.112870449780871, 18.550502564612334, 0,
+                   0,                   0.97327352260981159, -0.68034983406164207,
+                   0,                   1.0086235279325266,  -1,
+                   -0.30154721648069616, 0.43763211483146358};
+  lp.row_upper_ = lp.row_lower_;
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0, 2, 3, 4, 4, 5, 7, 9, 11, 13, 15, 17, 19, 21, 21};
+  lp.a_matrix_.index_ = {10, 1, 10, 0, 2, 2, 3, 4, 5, 5, 7,
+                         5,  6, 6,  8, 7, 8, 7, 9, 3, 4};
+  lp.a_matrix_.value_ = {1, 1,  -1, -1, -1, 1,  -1, 1,  -1, 1, -1,
+                         1, -1, 1,  -1, 1,  -1, 1,  -1, 1,  -1};
+  Highs h;
+  h.setOptionValue("output_flag", dev_run);
+  h.setOptionValue("solver", kIpxString);
+  h.setOptionValue("presolve", kHighsOffString);
+  REQUIRE(h.passModel(lp) == HighsStatus::kOk);
+  h.run();
+  REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
+  // Without crossover from the IPX iterate: 8 simplex iterations
+  REQUIRE(h.getInfo().simplex_iteration_count == 0);
+  REQUIRE(std::fabs(h.getInfo().objective_function_value - lp.offset_) < 1e-9);
+  h.resetThreadScheduler(true);
+}
+
+TEST_CASE("ipx-fixed-column-gap", "[highs_ipx]") {
+  // A balanced transportation LP whose objective constant -147155 (optimal
+  // c'x) is the cost of a column fixed at 1, so that the optimum is 0.
+  // - Presolve off: IPX removes the fixed column itself and used to
+  //   normalise its gap by the objective of the LP without it (about 1.5e5),
+  //   so it stopped with HiGHS's P-D objective error at 5.1e-5: Unknown
+  // - Presolve on, IPX dualizing the presolved LP: its objective without the
+  //   offset is that of the LP negated, so the gap was normalised by about
+  //   twice the offset, and IPX stopped at 14 times the tolerance
+  const std::vector<double> supply = {7267, 14623, 6263};
+  const std::vector<double> demand = {7615, 5870, 6327, 8341};
+  HighsLp lp;
+  lp.num_col_ = 13;
+  lp.num_row_ = 7;
+  lp.col_cost_ = {9, 4, 7, 1, 8, 8, 8, 7, 8, 4, 7, 2, -147155};
+  lp.col_lower_.assign(lp.num_col_, 0);
+  lp.col_upper_.assign(lp.num_col_, kHighsInf);
+  lp.col_lower_[12] = 1;
+  lp.col_upper_[12] = 1;
+  lp.row_lower_ = supply;
+  lp.row_lower_.insert(lp.row_lower_.end(), demand.begin(), demand.end());
+  lp.row_upper_ = lp.row_lower_;
+  lp.a_matrix_.format_ = MatrixFormat::kColwise;
+  lp.a_matrix_.start_ = {0};
+  for (HighsInt i = 0; i < 3; ++i) {
+    for (HighsInt j = 0; j < 4; ++j) {
+      lp.a_matrix_.index_.push_back(i);
+      lp.a_matrix_.index_.push_back(3 + j);
+      lp.a_matrix_.value_.push_back(1);
+      lp.a_matrix_.value_.push_back(1);
+      lp.a_matrix_.start_.push_back(lp.a_matrix_.index_.size());
+    }
+  }
+  lp.a_matrix_.start_.push_back(lp.a_matrix_.index_.size());
+
+  struct Run {
+    std::string presolve;
+    HighsInt dualize;
+  };
+  for (const Run& run : {Run{kHighsOffString, kIpxDualizeStrategyOff},
+                         Run{kHighsOnString, kIpxDualizeStrategyOn}}) {
+    const HighsInt dualize = run.dualize;
+    Highs h;
+    h.setOptionValue("output_flag", dev_run);
+    h.setOptionValue("solver", kIpxString);
+    h.setOptionValue("presolve", run.presolve);
+    h.setOptionValue("run_crossover", kHighsOffString);
+    h.setOptionValue("ipx_dualize_strategy", dualize);
+    REQUIRE(h.passModel(lp) == HighsStatus::kOk);
+    h.run();
+    REQUIRE(h.getModelStatus() == HighsModelStatus::kOptimal);
+    double optimality_tolerance;
+    h.getOptionValue("optimality_tolerance", optimality_tolerance);
+    REQUIRE(h.getInfo().primal_dual_objective_error <= optimality_tolerance);
+    REQUIRE(std::fabs(h.getInfo().objective_function_value) < 1e-3);
+    h.resetThreadScheduler(true);
+  }
+}
