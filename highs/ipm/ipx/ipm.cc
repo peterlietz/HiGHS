@@ -61,8 +61,8 @@ void IPM::Driver(KKTSolver* kkt, Iterate* iterate, Info* info) {
         const bool diverged = best_complementarity_ > 0.0 &&
             iterate_->complementarity() > kDivergeTol * best_complementarity_;
         // A run of bad iterations is a stall unless its short steps are
-        // rebalancing the iterate (see MakeStep()), which is tolerated for at
-        // most kMaxBadRun iterations.
+        // rebalancing or recentring the iterate (see MakeStep()), which is
+        // tolerated for at most kMaxBadRun iterations.
         const bool stalled = num_bad_iter_ >= kMaxBadIter &&
             (!tolerate_rebalancing_ || num_stagnant_iter_ >= kMaxBadIter ||
              num_bad_iter_ >= kMaxBadRun);
@@ -93,7 +93,8 @@ void IPM::Driver(KKTSolver* kkt, Iterate* iterate, Info* info) {
                 info->status_ipm = IPX_STATUS_no_progress;
             }
             else {
-                // The short steps are rebalancing the iterate; carry on.
+                // The short steps are rebalancing or recentring the
+                // iterate; carry on.
                 stop = false;
             }
             if (stop)
@@ -796,6 +797,7 @@ void IPM::MakeStep(const Step& step, bool isCentring) {
         if (num_bad_iter_ == 0) {
             run_presidual_ = presidual;
             run_dresidual_ = dresidual;
+            run_gap_ref_ = std::max(objective_gap, complementarity);
         }
         bool rebalancing = false;
         if (short_step && !stalled &&
@@ -818,9 +820,25 @@ void IPM::MakeStep(const Step& step, bool isCentring) {
                 reduced(presidual, presidual_new, run_presidual_, pres_tol) &&
                 reduced(dresidual, dresidual_new, run_dresidual_, dres_tol);
         }
+        // Near the optimum of an LP whose feasible set has no (or a very
+        // thin) interior, the iterate can come close to the boundary with
+        // the residuals within tolerance. The steps are then short for a
+        // while: sigma is close to 1, so they are mostly centring, and once
+        // the iterate is central again the IPM takes long steps and
+        // converges. A short step that doesn't stall is recentring if the
+        // iterate stays within the feasibility tolerances and the objective
+        // gap stays within kMaxRunGapGrowth times its size at the start of
+        // the run of bad iterations (or the complementarity gap then, if
+        // larger). In a stall the gap grows instead, for example by a factor
+        // of about 3 per iteration when the dual objective of an infeasible
+        // LP runs away. Recentring steps are not counted in
+        // num_stagnant_iter_ either.
+        const bool recentring = short_step && !stalled &&
+            presidual_new <= pres_tol && dresidual_new <= dres_tol &&
+            new_objective_gap <= kMaxRunGapGrowth * run_gap_ref_;
         if (short_step || stalled) {
             num_bad_iter_++;
-            if (!rebalancing)
+            if (!rebalancing && !recentring)
                 num_stagnant_iter_++;
         } else {
             num_bad_iter_ = 0;
