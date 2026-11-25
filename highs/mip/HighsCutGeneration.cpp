@@ -859,7 +859,9 @@ bool HighsCutGeneration::postprocessCut(const HighsDomain& globaldom) {
           if (ub == kHighsInf) return false;
 
           rhs -= delta * ub;
-        } else {
+        } else if (delta > 0.0) {
+          // an exactly integral coefficient (delta == 0) needs no bound, so a
+          // column without a lower bound must not reject the cut
           double lb = globaldom.col_lower_[inds[i]];
           if (lb == -kHighsInf) return false;
 
