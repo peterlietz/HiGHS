@@ -532,6 +532,7 @@ struct HighsOptionsStruct {
   bool mip_improving_solution_report_sparse;
   std::string mip_improving_solution_file;
   bool mip_root_presolve_only;
+  bool mip_restart_root_ipm;
   HighsInt mip_lifting_for_probing;
   bool mip_search_simulate_concurrency;
   bool mip_allow_cut_separation_at_nodes;
@@ -708,6 +709,7 @@ struct HighsOptionsStruct {
         mip_improving_solution_report_sparse(false),
         mip_improving_solution_file(""),
         mip_root_presolve_only(false),
+        mip_restart_root_ipm(false),
         mip_lifting_for_probing(-1),
         mip_search_simulate_concurrency(false),
         // clang-format off
@@ -1202,6 +1204,15 @@ class HighsOptions : public HighsOptionsStruct {
         "mip_root_presolve_only",
         "Whether MIP presolve is only applied at the root node", advanced,
         &mip_root_presolve_only, false);
+    records.push_back(record_bool);
+
+    record_bool = new OptionRecordBool(
+        "mip_restart_root_ipm",
+        "After a restart of the MIP solver, solve the root LP like the "
+        "first one: from scratch with mip_lp_solver, rather than with "
+        "simplex from the root basis carried over into the restarted model. "
+        "No effect unless mip_lp_solver is \"ipm\", \"ipx\" or \"hipo\"",
+        advanced, &mip_restart_root_ipm, false);
     records.push_back(record_bool);
 
     record_int = new OptionRecordInt(
