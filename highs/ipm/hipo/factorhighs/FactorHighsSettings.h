@@ -46,6 +46,12 @@ const Int kMinConsecutiveSums = 1;
 
 // regularisation
 const double kDynamicDiagCoeff = 1e-24;
+// Relative threshold for symmetric positive definite matrices, such as the
+// normal equations. Elimination computes a pivot as its original diagonal entry
+// minus positive terms, with a rounding error of the order of machine epsilon
+// times that entry. A pivot that cancels down to a few epsilon of its original
+// entry is noise, and is regularised.
+const double kDynamicDiagRelSpd = 1e-14;
 
 // parallel solve
 const double kLargeTaskRelativeThresh = 0.01;

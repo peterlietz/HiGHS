@@ -31,13 +31,15 @@ namespace hipo {
 */
 
 // dense factorisation kernel
+// thresh holds the threshold for dynamic regularisation of each pivot.
 Int denseFactK(char uplo, Int n, double* A, Int lda, Int* pivot_sign,
-               double thresh, double* totalreg, Int* swaps, double* pivot_2x2,
-               DataCollector& data, const FHoptions& options);
+               const double* thresh, double* totalreg, Int* swaps,
+               double* pivot_2x2, DataCollector& data,
+               const FHoptions& options);
 
 // dense partial factorisation, in "hybrid formats"
 Int denseFactFH(char format, Int n, Int k, double* A, double* B,
-                const Int* pivot_sign, double thresh, double* totalreg,
+                const Int* pivot_sign, const double* thresh, double* totalreg,
                 Int* swaps, double* pivot_2x2, DataCollector& data,
                 const FHoptions& options);
 

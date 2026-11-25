@@ -161,6 +161,10 @@ void Factorise::processSupernode(Int sn) {
   // Assemble original matrix M into frontal
   // ===================================================
   HIPO_CLOCK_START(2);
+  // threshold for dynamic regularisation of each pivot of the supernode
+  const double reg_thresh = M_norm1_ * kDynamicDiagCoeff;
+  std::vector<double> pivot_thresh(sn_size, reg_thresh);
+
   // j is relative column index in the frontal matrix
   for (Int j = 0; j < sn_size; ++j) {
     // column index in the original matrix
@@ -172,6 +176,12 @@ void Factorise::processSupernode(Int sn) {
       const Int i = S_.relindCols(el);
 
       FH->assembleFrontal(i, j, valM_[el]);
+
+      // A pivot that elimination has reduced to below dynamic_reg_rel times
+      // its original diagonal entry is dominated by rounding errors.
+      if (i == j && FH_opt_.dynamic_reg_rel > 0.0)
+        pivot_thresh[j] =
+            std::max(reg_thresh, FH_opt_.dynamic_reg_rel * std::abs(valM_[el]));
     }
   }
   HIPO_CLOCK_STOP(2, data_, kTimeFactoriseAssembleOriginal);
@@ -229,11 +239,7 @@ void Factorise::processSupernode(Int sn) {
   // Partial factorisation
   // ===================================================
   HIPO_CLOCK_START(2);
-  // threshold for regularisation
-  // const double reg_thresh = max_diag_ * kDynamicDiagCoeff;
-  const double reg_thresh = M_norm1_ * kDynamicDiagCoeff;
-
-  if (Int flag = FH->denseFactorise(reg_thresh)) {
+  if (Int flag = FH->denseFactorise(pivot_thresh.data())) {
     flag_stop_.store(true, std::memory_order_relaxed);
 
     if (logger_ && flag == kRetInvalidInput)
