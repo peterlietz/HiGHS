@@ -671,6 +671,19 @@ double HighsMipSolverData::computeNewUpperLimit(double ub, double mip_abs_gap,
   return new_upper_limit;
 }
 
+double HighsMipSolverData::upperLimitObjective(const double solobj,
+                                               const bool attained) const {
+  // When the objective is integral, computeNewUpperLimit assumes that
+  // its argument is attained, so that the next better solution is at
+  // least one integral step better. The objective value of a solution in
+  // the original space need not be attained in the reduced space (#3400),
+  // so round it up to the next integral value, otherwise solutions with
+  // objective in (solobj-1, solobj) are wrongly cut off
+  if (attained || !objectiveFunction.isIntegral()) return solobj;
+  const double scale = objectiveFunction.integralScale();
+  return std::ceil(scale * solobj - feastol) / scale;
+}
+
 bool HighsMipSolverData::moreHeuristicsAllowed() const {
   // in the beginning of the search and in sub-MIP heuristics we only allow
   // what is proportionally for the currently spent effort plus an initial
@@ -854,6 +867,10 @@ void HighsMipSolverData::checkAddSolution(const bool from_cleanup_solve) {
   double solobj =
       mipsolver.solution_objective_ * (int)mipsolver.orig_model_->sense_ -
       mipsolver.model_->offset_;
+  // Whether solobj is the objective value of a solution in the reduced
+  // space, rather than that of the start solution in the original
+  // space, which need not be attained in the reduced space
+  bool solobj_attained = false;
   const bool saved_solution_feasible =
       mipsolver.bound_violation_ <=
           mipsolver.options_mip_->mip_feasibility_tolerance &&
@@ -1000,6 +1017,7 @@ void HighsMipSolverData::checkAddSolution(const bool from_cleanup_solve) {
           // The objective used by the MIP solver in the reduced space may
           // have changed
           solobj = mipsolver_reduced_objective_value;
+          solobj_attained = true;
           highsLogUser(mipsolver.options_mip_->log_options, HighsLogType::kInfo,
                        "MIP start solution is has objective value %.6g in the "
                        "original space, but %.6g in the reduced space\n",
@@ -1020,13 +1038,14 @@ void HighsMipSolverData::checkAddSolution(const bool from_cleanup_solve) {
       updatePrimalDualIntegral(lower_bound, lower_bound, prev_upper_bound,
                                upper_bound);
 
-    double new_upper_limit = computeNewUpperLimit(solobj, 0.0, 0.0);
+    const double limit_obj = upperLimitObjective(solobj, solobj_attained);
+    double new_upper_limit = computeNewUpperLimit(limit_obj, 0.0, 0.0);
 
     saveReportMipSolution(new_upper_limit);
     if (new_upper_limit < upper_limit) {
       upper_limit = new_upper_limit;
       optimality_limit =
-          computeNewUpperLimit(solobj, mipsolver.options_mip_->mip_abs_gap,
+          computeNewUpperLimit(limit_obj, mipsolver.options_mip_->mip_abs_gap,
                                mipsolver.options_mip_->mip_rel_gap);
       nodequeue.setOptimalityLimit(optimality_limit);
     }
